@@ -251,6 +251,12 @@ Requirements: JDK 17 and the Android SDK (platform 34, build tools 34.0.0).
 ./gradlew assembleRelease      # minified with R8; signed if a keystore is configured (see CONTRIBUTING.md)
 ```
 
+## Contributing
+
+Bug reports, device results and pull requests are welcome. See [CONTRIBUTING.md](CONTRIBUTING.md) for how to build
+(no keys needed), test on an emulator and open a pull request. Questions go in
+[Discussions](https://github.com/AbhishekKaisar/glassos-tv/discussions).
+
 ## Licence
 
 GNU General Public License v3.0. See [LICENSE](LICENSE).
