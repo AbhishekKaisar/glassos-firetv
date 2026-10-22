@@ -563,20 +563,47 @@ class ControlCenter(private val home: HomeScreen) : FrameLayout(home.ctx) {
     private fun buildGeneral() {
         val ctx = context
         val power = button(Glyph.POWER, "Sleep") { close(instant = true) { Power.sleep(ctx) } }
-        val wifi = button(Glyph.WIFI, Net.networkName(ctx)) { open(FireIntents.wifi(), FireIntents.SETTINGS_PKG) }
+        val fireTv = Platform.isFireTv(ctx)
+        val wifi = button(Glyph.WIFI, Net.networkName(ctx)) {
+            if (fireTv) open(FireIntents.wifi(), FireIntents.SETTINGS_PKG) else openStd(android.provider.Settings.ACTION_WIFI_SETTINGS)
+        }
         val dnd = button(Glyph.MOON, "Do Not Disturb") { toggleDnd() }.apply { on = Dnd.isOn(ctx) }
         dndButton = dnd
-        val audio = button(Glyph.SPEAKER, "Audio") { open(FireIntents.audio(), FireIntents.SETTINGS_PKG, "Choose Display & Audio") }
+        val audio = button(Glyph.SPEAKER, "Audio") {
+            if (fireTv) open(FireIntents.audio(), FireIntents.SETTINGS_PKG, "Choose Display & Audio") else openStd(android.provider.Settings.ACTION_SOUND_SETTINGS)
+        }
         val timer = button(Glyph.TIMER, "Sleep Timer") { showTimerChoices() }.apply {
             text = SleepTimer.remaining(ctx); on = text != null
         }
         timerButton = timer
-        val pads = button(Glyph.GAMEPAD, "Controllers") { open(FireIntents.controllers(), FireIntents.SETTINGS_PKG) }
-        val acc = button(Glyph.ACCESS, "Accessibility") { open(FireIntents.accessibility(), FireIntents.SETTINGS_PKG, "Choose Accessibility") }
-        val pc = button(Glyph.LOCK, "Parental") { open(FireIntents.parental(), "com.amazon.tv.parentalcontrols", "Choose Preferences, then Parental Controls") }
+        // Android TV: Bluetooth settings or the "pair remote or accessory" page where GlassOS may open them, else
+        // Settings, where Remotes & Accessories is.
+        val pads = button(Glyph.GAMEPAD, "Controllers") {
+            val i = if (fireTv) null else Platform.openable(ctx, CONTROLLER_ACTIONS)
+            when {
+                fireTv -> open(FireIntents.controllers(), FireIntents.SETTINGS_PKG)
+                i != null -> open(i, Platform.handler(ctx, i))
+                else -> {
+                    Toast.makeText(ctx, "Choose Remotes & Accessories", Toast.LENGTH_LONG).show()
+                    openStd(android.provider.Settings.ACTION_SETTINGS)
+                }
+            }
+        }
+        val acc = button(Glyph.ACCESS, "Accessibility") {
+            if (fireTv) open(FireIntents.accessibility(), FireIntents.SETTINGS_PKG, "Choose Accessibility") else openStd(android.provider.Settings.ACTION_ACCESSIBILITY_SETTINGS)
+        }
+        // Stock Android TV has no parental controls page of its own.
+        val pc = if (!fireTv) null
+            else button(Glyph.LOCK, "Parental") { open(FireIntents.parental(), "com.amazon.tv.parentalcontrols", "Choose Preferences, then Parental Controls") }
         val fire = button(Glyph.OPEN, "TV Settings") { close(instant = true) { home.openFireSettings() } }
         val gear = button(Glyph.GEAR, "GlassOS") { close(instant = true) { home.openSettings() } }
-        body.addView(grid(listOf(power, wifi, dnd, audio, timer, pads, acc, pc, fire, gear)))
+        body.addView(grid(listOfNotNull(power, wifi, dnd, audio, timer, pads, acc, pc, fire, gear)))
+    }
+
+    /** A standard Settings page (Android TV and Google TV). */
+    private fun openStd(action: String) {
+        val i = Intent(action)
+        open(i, Platform.handler(context, i))
     }
 
     private fun toggleDnd() {
@@ -623,8 +650,11 @@ class ControlCenter(private val home: HomeScreen) : FrameLayout(home.ctx) {
         box.addView(TextView(ctx).apply {
             text = home.prefs.name.ifEmpty { "Profile" }; textSize = 24f; typeface = Fonts.medium; setTextColor(Color.WHITE); gravity = Gravity.CENTER
         }, LinearLayout.LayoutParams(-2, -2).apply { topMargin = dpi(10f) })
-        val sw = button(Glyph.PEOPLE, "Switch Profile") { confirmSwitch() }
-        box.addView(sw, LinearLayout.LayoutParams(-2, -2).apply { topMargin = dpi(14f) })
+        // Fire TV profiles, or the account and profile settings on Google TV; hidden when this TV has neither.
+        if (Platform.isFireTv(ctx) || Platform.accountsIntent(ctx) != null) {
+            val sw = button(Glyph.PEOPLE, "Switch Profile") { confirmSwitch() }
+            box.addView(sw, LinearLayout.LayoutParams(-2, -2).apply { topMargin = dpi(14f) })
+        }
         body.addView(box, LayoutParams(-1, -2))
     }
 
@@ -635,10 +665,14 @@ class ControlCenter(private val home: HomeScreen) : FrameLayout(home.ctx) {
         title.text = "Switch Profile"
         val box = LinearLayout(ctx).apply { orientation = LinearLayout.VERTICAL; gravity = Gravity.CENTER_HORIZONTAL; clipChildren = false; clipToPadding = false }
         box.addView(TextView(ctx).apply {
-            text = "Open Fire TV Profiles?"; textSize = 17f; typeface = Fonts.regular; setTextColor(0xE6FFFFFF.toInt()); gravity = Gravity.CENTER
+            text = if (Platform.isFireTv(ctx)) "Open Fire TV Profiles?" else "Open ${Platform.name(ctx)} accounts and profiles?"; textSize = 17f; typeface = Fonts.regular; setTextColor(0xE6FFFFFF.toInt()); gravity = Gravity.CENTER
         }, LinearLayout.LayoutParams(-2, -2).apply { topMargin = dpi(6f) })
         val cancel = button(Glyph.CLOSE, "Cancel") { showTab(Tab.PROFILE); firstButton()?.requestFocus() }
-        val go = button(Glyph.CHECK, "Open") { open(FireIntents.profiles(), "com.amazon.ftv.profilepicker", "Choose Profiles") }
+        val go = button(Glyph.CHECK, "Open") {
+            val acc = Platform.accountsIntent(ctx)
+            if (Platform.isFireTv(ctx) || acc == null) open(FireIntents.profiles(), "com.amazon.ftv.profilepicker", "Choose Profiles")
+            else open(acc, Platform.handler(ctx, acc))
+        }
         val row = LinearLayout(ctx).apply { orientation = LinearLayout.HORIZONTAL; clipChildren = false; clipToPadding = false }
         row.addView(cancel); row.addView(go)
         box.addView(row, LinearLayout.LayoutParams(-2, -2).apply { topMargin = dpi(14f) })
@@ -772,4 +806,10 @@ private class ArtView(ctx: Context, private val size: Int, private val art: Bitm
 private val VPN_APPS = listOf(
     "com.surfshark.vpnclient.android", "com.nordvpn.android", "com.expressvpn.vpn", "ch.protonvpn.android",
     "com.privateinternetaccess.android", "com.ipvanish.vpn", "com.cyberghostvpn.android", "net.mullvad.mullvadvpn"
+)
+
+/** Android TV pages for the Controllers button, in order of preference. */
+private val CONTROLLER_ACTIONS = listOf(
+    android.provider.Settings.ACTION_BLUETOOTH_SETTINGS,
+    "com.google.android.intent.action.CONNECT_INPUT"
 )

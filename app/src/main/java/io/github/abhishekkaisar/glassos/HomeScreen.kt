@@ -332,9 +332,8 @@ class HomeScreen(val ctx: Context, private val host: HomeHost, seed: HomeScreen?
      * MainActivity it opens in Glass's own task, so Back from it returns straight to Glass.
      */
     fun openFireSettings() {
-        val i = FireIntents.settings()
-        if (i.resolveActivity(ctx.packageManager) == null) i.setAction(android.provider.Settings.ACTION_SETTINGS).setComponent(null)
-        startIntent(i, HomeWatcher.AMAZON)
+        val i = Platform.settingsIntent(ctx)
+        startIntent(i, Platform.handler(ctx, i))
     }
 
     /**
@@ -346,19 +345,26 @@ class HomeScreen(val ctx: Context, private val host: HomeHost, seed: HomeScreen?
         val ri = ctx.packageManager.resolveActivity(i, 0)
         val perm = ri?.activityInfo?.permission
         if (ri == null || (perm != null && ctx.checkCallingOrSelfPermission(perm) != PackageManager.PERMISSION_GRANTED)) {
-            val grid = FireIntents.settings()
+            val grid = Platform.settingsIntent(ctx)
             if (grid.resolveActivity(ctx.packageManager) == null) {
                 Toast.makeText(ctx, "Not available on this TV", Toast.LENGTH_SHORT).show()
                 return
             }
             if (hint != null) Toast.makeText(ctx, hint, Toast.LENGTH_LONG).show()
-            if (ctx !is Activity) grid.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-            host.startApp(grid, HomeWatcher.AMAZON, null)
+            if (ownTask()) grid.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            host.startApp(grid, Platform.handler(ctx, grid), null)
             return
         }
-        if (ctx !is Activity) i.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+        if (ownTask()) i.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
         host.startApp(i, pkg, null)
     }
+
+    /**
+     * Settings pages open in their own task from the overlay, and on Android TV, where GlassOS may be the default
+     * home: a page left in the home task would come back on Home instead of GlassOS. On Fire TV they stay in
+     * Glass's task, so Back from them returns straight to Glass.
+     */
+    private fun ownTask() = ctx !is Activity || !Platform.isFireTv(ctx)
 
     fun openAmazonHome() = HomeWatcher.openAmazonHome(ctx)
 
@@ -421,6 +427,7 @@ class HomeScreen(val ctx: Context, private val host: HomeHost, seed: HomeScreen?
 
     fun onResumed() {
         resumed = true
+        if (::setup.isInitialized) setup.onReturned()
         updateTime()
         if (!worker.isShutdown) worker.execute { refreshTitles(prefs.scene, wallToken) }
     }

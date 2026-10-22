@@ -60,16 +60,17 @@ object Power {
         (ctx.getSystemService(Context.DEVICE_POLICY_SERVICE) as DevicePolicyManager).isAdminActive(admin(ctx))
     } catch (e: Throwable) { false }
 
-    /** Puts the TV to sleep with the device admin; without it, opens Amazon's quick settings, which has Sleep. */
+    /** Puts the TV to sleep with the device admin; without it, opens Amazon's quick settings on Fire TV, which has Sleep. */
     fun sleep(ctx: Context): Boolean {
         if (adminActive(ctx)) try {
             (ctx.getSystemService(Context.DEVICE_POLICY_SERVICE) as DevicePolicyManager).lockNow()
             WLog.i("lockNow")
             return true
         } catch (e: Throwable) { WLog.i("lockNow failed: $e") }
-        try {
+        if (Platform.isFireTv(ctx)) try {
             ctx.startActivity(Intent(FireIntents.HUD).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
         } catch (e: Throwable) { }
+        else android.widget.Toast.makeText(ctx, "Sleep needs the device admin permission (Settings > Permissions)", android.widget.Toast.LENGTH_LONG).show()
         return false
     }
 }

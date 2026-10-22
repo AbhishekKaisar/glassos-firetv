@@ -26,15 +26,20 @@ import android.widget.Toast
 import java.io.File
 import java.util.Locale
 
+private const val REQ_HOME = 8
+
 /**
  * First-run setup in a centred glass panel over the Top Shelf, driven with the D-pad: name (on-screen keyboard),
  * profile photo, country, the apps on the top row, and one-tap permissions over the TV's own ADB. Single steps
  * also open from Settings ([open] with single = true).
  */
 class SetupView(private val home: HomeScreen) : FrameLayout(home.ctx) {
-    enum class Step { WELCOME, NAME, PHOTO, COUNTRY, APPS, PERMISSIONS, DONE, TMDB_KEY, ABOUT }
+    enum class Step { WELCOME, NAME, PHOTO, COUNTRY, APPS, PERMISSIONS, HOME, DONE, TMDB_KEY, ABOUT }
 
-    private val flow = listOf(Step.WELCOME, Step.NAME, Step.PHOTO, Step.COUNTRY, Step.APPS, Step.PERMISSIONS, Step.DONE)
+    /** Fire TV cannot change its home app, so the home step is for Android TV and Google TV only. */
+    private val fireTv = Platform.isFireTv(context)
+    private val flow = listOfNotNull(Step.WELCOME, Step.NAME, Step.PHOTO, Step.COUNTRY, Step.APPS, Step.PERMISSIONS,
+        if (fireTv) null else Step.HOME, Step.DONE)
     var isOpen = false
         private set
     private var step = Step.WELCOME
@@ -169,6 +174,7 @@ class SetupView(private val home: HomeScreen) : FrameLayout(home.ctx) {
             Step.COUNTRY -> countryStep()
             Step.APPS -> appsStep()
             Step.PERMISSIONS -> permissionsStep()
+            Step.HOME -> homeStep()
             Step.DONE -> doneStep()
             Step.TMDB_KEY -> keyStep()
             Step.ABOUT -> aboutStep()
@@ -430,9 +436,7 @@ class SetupView(private val home: HomeScreen) : FrameLayout(home.ctx) {
         subtitle.text = "GlassOS gives itself a few permissions once, over the TV's own ADB."
         val box = LinearLayout(context).apply { orientation = LinearLayout.VERTICAL; clipChildren = false; clipToPadding = false }
         // The how-to, replaced by progress and results once Set Up is chosen.
-        val status = text(
-            "Turn on ADB debugging in Settings > My Fire TV > Developer options, choose Set Up, then choose Allow " +
-            "when the TV asks \"Allow USB debugging?\" (tick Always allow). Everything works without these, with less.",
+        val status = text(howTo() + " Everything works without these, with less.",
             14f, 0xD9FFFFFF.toInt()).apply { gravity = Gravity.CENTER_HORIZONTAL }
         box.addView(status, LinearLayout.LayoutParams(-1, -2).apply { bottomMargin = dpi(10f) })
         grantRows = ArrayList()
@@ -480,13 +484,8 @@ class SetupView(private val home: HomeScreen) : FrameLayout(home.ctx) {
                     msg = if (missing.isEmpty()) "All set: every permission is granted. You can turn ADB debugging off again."
                     else "Could not grant: ${missing.joinToString(", ")}. ${r.log.lineSequence().firstOrNull() ?: ""}"
                 }
-            } catch (e: java.net.ConnectException) {
-                msg = "Could not reach ADB. Turn on ADB debugging in Developer options, then try again. No Developer options? " +
-                    "Open Settings > My Fire TV > About and press OK on your device name 7 times."
-            } catch (e: java.net.SocketTimeoutException) {
-                msg = "No answer from the TV's prompt. Try again and choose Allow."
             } catch (e: Throwable) {
-                msg = "ADB refused the connection (${e.javaClass.simpleName}). Turn ADB debugging off and on, then try again."
+                msg = adbError(e)
             }
             ui.post {
                 if (id != attempt) return@post
@@ -495,6 +494,127 @@ class SetupView(private val home: HomeScreen) : FrameLayout(home.ctx) {
                 if (!isOpen) return@post
                 status.text = msg
                 refreshGrants()
+                invalidateDeep(panel)
+            }
+        }.start()
+    }
+
+    /** How to turn on ADB for the one-tap grants, for this platform. */
+    private fun howTo(): String = if (fireTv)
+        "Turn on ADB debugging in Settings > My Fire TV > Developer options, choose Set Up, then choose Allow " +
+            "when the TV asks \"Allow USB debugging?\" (tick Always allow)."
+    else
+        "Turn on USB debugging (or Network debugging) in Settings > Device Preferences > Developer options, choose Set Up, " +
+            "then choose Allow when the TV asks \"Allow USB debugging?\" (tick Always allow)."
+
+    /** A clear message for a failed connection to the TV's own ADB. */
+    private fun adbError(e: Throwable): String = when (e) {
+        is java.net.ConnectException -> if (fireTv)
+            "Could not reach ADB. Turn on ADB debugging in Developer options, then try again. No Developer options? " +
+                "Open Settings > My Fire TV > About and press OK on your device name 7 times."
+        else
+            "The TV refused the connection on 127.0.0.1:5555. Turn on USB or Network debugging in Device Preferences > " +
+                "Developer options (no Developer options? press OK on Build in Device Preferences > About 7 times). " +
+                "On Android 11 and later, Wireless debugging alone does not open this port: run the adb commands from a computer instead (see the README)."
+        is java.net.SocketTimeoutException -> "No answer from the TV's prompt. Try again and choose Allow."
+        else -> "ADB refused the connection (${e.javaClass.simpleName}). Turn debugging off and on, then try again."
+    }
+
+    // ---------- Home app (Android TV and Google TV) ----------
+
+    /** How the next "Make Home" press tries: the system's own ways first, then ADB. */
+    private var homeTries = 0
+
+    private fun homeStep() {
+        title.text = "Make GlassOS your home screen"
+        val box = LinearLayout(context).apply { orientation = LinearLayout.VERTICAL; gravity = Gravity.CENTER_HORIZONTAL; clipChildren = false; clipToPadding = false }
+        val status = text("", 15f, 0xD9FFFFFF.toInt()).apply { gravity = Gravity.CENTER_HORIZONTAL }
+        homeStatus = status
+        homeTries = 0
+        box.addView(status, LinearLayout.LayoutParams(-1, -2))
+        body.addView(box, LayoutParams(-1, -2, Gravity.CENTER_VERTICAL))
+        if (!single) navButton("Back") { back() }
+        val make = navButton("Make Home", primary = true) { makeHome(status) }
+        navButton(if (single) "Close" else continueLabel()) { next() }
+        refreshHome()
+        make.requestFocus()
+    }
+
+    private var homeStatus: TextView? = null
+
+    private fun refreshHome() {
+        val status = homeStatus ?: return
+        if (Platform.isDefaultHome(context)) {
+            subtitle.text = "Done: Home opens GlassOS."
+            status.text = "✓  GlassOS is the default home app. The Home button opens it straight away, with no watcher running."
+            status.setTextColor(0xFF7CE38B.toInt())
+        } else if (homeTries > 0) {
+            subtitle.text = "Home still opens the TV's own home screen."
+            status.text = "Choose Make Home again to try another way. If none works, this TV keeps its own home app, and " +
+                "GlassOS comes back after Home on its own (needs Usage access and Display over other apps)."
+            status.setTextColor(0xD9FFFFFF.toInt())
+        } else {
+            subtitle.text = "So the Home button opens GlassOS straight away."
+            status.text = "Choose Make Home, then pick GlassOS (choose Always if asked). If your TV does not let you change " +
+                "its home app, GlassOS comes back after Home on its own (needs Usage access and Display over other apps)."
+            status.setTextColor(0xD9FFFFFF.toInt())
+        }
+    }
+
+    /** Back from the system's home picker: show whether it worked. */
+    fun onReturned() { if (isOpen && step == Step.HOME) { refreshHome(); invalidateDeep(panel) } }
+
+    private fun makeHome(status: TextView) {
+        if (Platform.isDefaultHome(context)) { refreshHome(); return }
+        val act = context as? Activity
+        val n = homeTries++
+        // 1. The system's role request (Android 10+), 2. the default-apps page, 3. the Home chooser, 4. ADB.
+        if (n == 0 && act != null && Build.VERSION.SDK_INT >= 29) {
+            val rm = context.getSystemService(android.app.role.RoleManager::class.java)
+            if (rm != null && rm.isRoleAvailable(android.app.role.RoleManager.ROLE_HOME) && !rm.isRoleHeld(android.app.role.RoleManager.ROLE_HOME)) {
+                try { act.startActivityForResult(rm.createRequestRoleIntent(android.app.role.RoleManager.ROLE_HOME), REQ_HOME); return } catch (e: Throwable) { }
+            }
+        }
+        if (n <= 1) {
+            val i = Platform.homeSettingsIntent(context)
+            if (i != null) try {
+                if (act == null) i.addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK)
+                context.startActivity(i)
+                Toast.makeText(context, "Choose GlassOS as the home app", Toast.LENGTH_LONG).show()
+                return
+            } catch (e: Throwable) { }
+            if (Platform.homeChooserAvailable(context)) try {
+                context.startActivity(Platform.homeChooserIntent().addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK))
+                Toast.makeText(context, "Choose GlassOS, then Always", Toast.LENGTH_LONG).show()
+                return
+            } catch (e: Throwable) { }
+        }
+        setHomeOverAdb(status)
+    }
+
+    /** `cmd package set-home-activity` over the TV's own ADB, for builds whose settings will not change the home app. */
+    private fun setHomeOverAdb(status: TextView) {
+        if (Build.VERSION.SDK_INT < 24) {
+            status.text = "This Android version cannot change the home app this way. GlassOS comes back after Home on its own."
+            return
+        }
+        if (granting) return
+        granting = true
+        val id = ++attempt
+        status.text = "Setting the home app over the TV's ADB…"
+        Thread {
+            val msg: String = try {
+                AdbClient.connect(context, onPrompt = {
+                    ui.post { if (id == attempt) status.text = "Choose Allow on the TV's prompt (tick Always allow)." }
+                }).use { adb -> Grants.setHome(context, adb) }
+                if (Platform.isDefaultHome(context)) "" else
+                    "This TV keeps its own home app. GlassOS comes back after Home on its own instead (needs Usage access and Display over other apps)."
+            } catch (e: Throwable) { adbError(e) }
+            ui.post {
+                granting = false
+                if (!isOpen || id != attempt) return@post
+                HomeWatcher.sync(context)
+                if (msg.isEmpty()) refreshHome() else status.text = msg
                 invalidateDeep(panel)
             }
         }.start()
@@ -526,7 +646,8 @@ class SetupView(private val home: HomeScreen) : FrameLayout(home.ctx) {
             LinearLayout.LayoutParams(-1, -2).apply { topMargin = dpi(12f) })
         box.addView(text("Top Shelf: ${HeroRepo.sourceLabel(prefs.topShelf)}. Titles and images come from TMDB; streaming availability from TMDB's watch provider data (JustWatch).", 14f, 0xB3FFFFFF.toInt()).apply { gravity = Gravity.CENTER },
             LinearLayout.LayoutParams(-1, -2).apply { topMargin = dpi(12f) })
-        box.addView(text("Not affiliated with or endorsed by Amazon or Apple. Fire TV is a trademark of Amazon.com, Inc.", 13f, 0x99FFFFFF.toInt()).apply { gravity = Gravity.CENTER },
+        box.addView(text("Not affiliated with or endorsed by Google, Amazon or Apple. Android TV and Google TV are trademarks of Google LLC; " +
+            "Fire TV is a trademark of Amazon.com, Inc.", 13f, 0x99FFFFFF.toInt()).apply { gravity = Gravity.CENTER },
             LinearLayout.LayoutParams(-1, -2).apply { topMargin = dpi(12f) })
         body.addView(box, LayoutParams(-1, -2, Gravity.CENTER))
         navButton("Close", primary = true) { close() }.requestFocus()

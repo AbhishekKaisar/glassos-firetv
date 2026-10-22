@@ -32,7 +32,8 @@ class BootReceiver : BroadcastReceiver() {
                 // earlier it covers Amazon's home before that signals Fire OS, and the logo stays up for 2 minutes.
                 // Without usage access there is no watcher, so start Glass directly once boot has completed.
                 val watcher = Prefs(context).replaceHome && HomeWatcher.hasAccess(context)
-                if (!watcher && a != Intent.ACTION_LOCKED_BOOT_COMPLETED && !started && !HomeShare.mainResumed) {
+                // As the default home app (Android TV) the system starts Glass itself.
+                if (!watcher && !Platform.isDefaultHome(context) && a != Intent.ACTION_LOCKED_BOOT_COMPLETED && !started && !HomeShare.mainResumed) {
                     started = true
                     val i = Intent(context, MainActivity::class.java)
                         .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_RESET_TASK_IF_NEEDED)

@@ -43,9 +43,11 @@ class SettingsView(private val act: HomeScreen) : FrameLayout(act.ctx) {
     private val editRow = RowView(context, "Edit top row")
     private val bgRow = RowView(context, "Background").apply { isFocusable = false; isClickable = false }
     private val allRow = RowView(context, "Show all apps")
-    private val replaceRow = RowView(context, "Replace Fire TV home")
-    private val fireSettingsRow = RowView(context, "Fire TV settings")
-    private val fireHomeRow = RowView(context, "Fire TV home")
+    private val replaceRow = RowView(context, "Replace ${Platform.name(context)} home")
+    private val fireSettingsRow = RowView(context, "${Platform.name(context)} settings")
+    private val fireHomeRow = RowView(context, "${Platform.name(context)} home")
+    /** Android TV and Google TV: make GlassOS the default home app. */
+    private val homeAppRow = RowView(context, "Home screen")
     private val scroll = ScrollView(context).apply {
         isVerticalScrollBarEnabled = false
         overScrollMode = View.OVER_SCROLL_NEVER
@@ -114,8 +116,9 @@ class SettingsView(private val act: HomeScreen) : FrameLayout(act.ctx) {
         list.addView(allRow, rowLp())
         list.addView(replaceRow, rowLp())
         list.addView(permsRow, rowLp())
+        if (!Platform.isFireTv(context)) list.addView(homeAppRow, rowLp())
         list.addView(fireSettingsRow, rowLp())
-        list.addView(fireHomeRow, rowLp())
+        if (Platform.stockHome(context) != null) list.addView(fireHomeRow, rowLp())
         list.addView(setupRow, rowLp())
         list.addView(uninstallRow, rowLp())
         list.addView(aboutRow, rowLp())
@@ -127,6 +130,7 @@ class SettingsView(private val act: HomeScreen) : FrameLayout(act.ctx) {
         keyRow.onClick = { step(keyRow, SetupView.Step.TMDB_KEY) }
         appsRow.onClick = { step(appsRow, SetupView.Step.APPS) }
         permsRow.onClick = { step(permsRow, SetupView.Step.PERMISSIONS) }
+        homeAppRow.onClick = { step(homeAppRow, SetupView.Step.HOME) }
         setupRow.onClick = { resumeRow = setupRow; act.openSetup() }
         aboutRow.onClick = { step(aboutRow, SetupView.Step.ABOUT) }
         // Device admin blocks uninstalling; an app may always remove its own admin.
@@ -136,7 +140,9 @@ class SettingsView(private val act: HomeScreen) : FrameLayout(act.ctx) {
             updateValues()
             // Removing the admin lands a moment later; refresh the permissions count once it has.
             postDelayed({ if (isOpen) updateValues() }, 800)
-            android.widget.Toast.makeText(context, "Device admin removed and Fire TV home restored. You can uninstall GlassOS now.", android.widget.Toast.LENGTH_LONG).show()
+            val msg = if (Platform.isFireTv(context) || !Platform.isDefaultHome(context)) "Device admin removed and ${Platform.name(context)} home restored. You can uninstall GlassOS now."
+                else "Device admin removed. Choose your old home in Settings > Apps > Default apps (or on Home), then uninstall GlassOS."
+            android.widget.Toast.makeText(context, msg, android.widget.Toast.LENGTH_LONG).show()
         }
         shelfRow.onClick = {
             val ids = HeroRepo.SOURCES.map { it.first }
@@ -175,6 +181,7 @@ class SettingsView(private val act: HomeScreen) : FrameLayout(act.ctx) {
         permsRow.valueView.text = "${Grants.ALL.count { it.isGranted(context) }} of ${Grants.ALL.size}"
         bgRow.valueView.text = WallpaperStore.label(act.prefs.scene)
         replaceRow.valueView.text = if (act.prefs.replaceHome) "On" else "Off"
+        homeAppRow.valueView.text = if (Platform.isDefaultHome(context)) "GlassOS" else "Not GlassOS"
     }
 
     fun refreshThumbs() {

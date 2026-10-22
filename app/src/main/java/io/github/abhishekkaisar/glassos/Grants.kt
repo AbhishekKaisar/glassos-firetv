@@ -72,6 +72,14 @@ object Grants {
         return Result(ALL.associateWith { it.isGranted(ctx) }, log.toString())
     }
 
+    /** Makes GlassOS the default home app (Android TV, API 24+). Call off the UI thread. */
+    fun setHome(ctx: Context, adb: AdbClient) {
+        val cmd = "cmd package set-home-activity " + Platform.homeComponent(ctx).flattenToShortString()
+        val out = try { adb.shell(cmd) } catch (e: Throwable) { "error: ${e.message}" }
+        WLog.i("home: $cmd -> ${out.trim().take(200)}")
+        Thread.sleep(300)
+    }
+
     private fun listenerCommand(ctx: Context, adb: AdbClient): String {
         val comp = MediaListener.component(ctx).flattenToString()
         if (Build.VERSION.SDK_INT >= 26) return "cmd notification allow_listener $comp"

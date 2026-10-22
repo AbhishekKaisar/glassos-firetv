@@ -17,7 +17,11 @@ import android.os.Process
 import android.os.SystemClock
 
 /**
- * Brings Glass back when Amazon's home screen comes to the front (Back out of an app that starts the
+ * Brings Glass back when the TV's own home screen comes to the front: Amazon's on Fire TV, or the stock Google TV /
+ * Android TV home on builds where GlassOS is not the default home app. Not run at all when GlassOS is the default
+ * home (Home then opens GlassOS directly).
+ *
+ * On Fire TV: when Amazon's home screen comes to the front (Back out of an app that starts the
  * Amazon home itself, or the Home button). Polls usage events every 120 ms with the screen on, reading only
  * the events since the last poll, and shows [HomeOverlay] at once. (The Home key's CLOSE_SYSTEM_DIALOGS
  * broadcast is sent with an Amazon signature permission, so apps never receive it.) Needs GET_USAGE_STATS (granted with appops); without it the service stops and
@@ -32,6 +36,8 @@ class HomeWatcher : Service() {
     private var lastRedirect = 0L
     private var createdAt = 0L
     private var waitBootAnim = false
+    private var fireTv = true
+    private var homes: Set<String> = emptySet()
 
     private lateinit var power: android.os.PowerManager
     private val main = android.os.Handler(android.os.Looper.getMainLooper())
@@ -55,13 +61,15 @@ class HomeWatcher : Service() {
         thread = HandlerThread("glass-watch", Process.THREAD_PRIORITY_FOREGROUND).apply { start() }
         handler = Handler(thread.looper)
         power = getSystemService(Context.POWER_SERVICE) as android.os.PowerManager
+        fireTv = Platform.isFireTv(this)
+        homes = Platform.otherHomeActivities(this)
         lastTs = System.currentTimeMillis()
         createdAt = SystemClock.elapsedRealtime()
         handler.post(poll)
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
-        if (!prefs.replaceHome || !hasAccess(this)) { stopSelf(); return START_NOT_STICKY }
+        if (!wanted(this)) { stopSelf(); return START_NOT_STICKY }
         // After a boot, look back over the last events too: Amazon's home may have come up before the watcher.
         // Only for a watcher that has just started: a running one has already seen those events.
         if (intent?.getBooleanExtra(EXTRA_LOOK_BACK, false) == true && SystemClock.elapsedRealtime() - createdAt < 5000) handler.post {
@@ -96,7 +104,8 @@ class HomeWatcher : Service() {
             sawEvent = true
             val pkg = e.packageName ?: continue
             val cls = e.className ?: ""
-            val isHome = pkg == AMAZON && cls.contains("HomeActivity")
+            val isHome = if (fireTv) pkg == AMAZON && cls.contains("HomeActivity")
+                else "$pkg/$cls" in homes || (pkg in Platform.ANDROID_TV_HOMES && cls.endsWith("MainActivity"))
             // Glass or any Fire TV Settings screen in front ends a visit to Amazon's home the user chose from Glass:
             // the only exception is staying on that home itself.
             if ((pkg == packageName || isFireSettings(pkg, cls)) && e.timeStamp > choseAmazonAt) userChoseAmazon = false
@@ -104,11 +113,11 @@ class HomeWatcher : Service() {
             // Any other app in front ends the overlay (opened from it, or by a remote shortcut button).
             if (!isHome && pkg != packageName && e.timeStamp >= HomeOverlay.shownWall) main.post { HomeOverlay.otherAppInFront(pkg) }
             if (isHome) WLog.i("home event at ${e.timeStamp}, readable ${System.currentTimeMillis() - e.timeStamp} ms later")
-            if (pkg == AMAZON) {
+            if (Platform.isStockHomePkg(this, pkg)) {
                 amazonHome = isHome
                 // android.settings.SETTINGS (the remote's or another app's Settings) opens the Settings tab inside
                 // Amazon's home, which gives no event when the user leaves it.
-                homeIsSettings = isHome && e.timeStamp - settingsTrampolineAt in 0..TRAMPOLINE_MS
+                homeIsSettings = fireTv && isHome && e.timeStamp - settingsTrampolineAt in 0..TRAMPOLINE_MS
             } else {
                 amazonHome = false
                 // Leaving Amazon's home for any other app ends a visit the user chose from Glass.
@@ -178,7 +187,7 @@ class HomeWatcher : Service() {
     }
 
     companion object {
-        const val AMAZON = "com.amazon.tv.launcher"
+        const val AMAZON = Platform.FIRE_HOME
         const val EXTRA_FROM_WATCHER = "fromWatcher"
         const val EXTRA_SENT_AT = "sentAt"
         private const val EXTRA_LOOK_BACK = "lookBack"
@@ -209,6 +218,9 @@ class HomeWatcher : Service() {
             sp.getMethod("get", String::class.java, String::class.java).invoke(null, "init.svc.bootanim", "") == "running"
         } catch (e: Throwable) { false }
 
+        /** On, allowed, and needed: not when GlassOS is the default home app. */
+        fun wanted(ctx: Context): Boolean = Prefs(ctx).replaceHome && hasAccess(ctx) && !Platform.isDefaultHome(ctx)
+
         fun hasAccess(ctx: Context): Boolean = try {
             val ops = ctx.getSystemService(Context.APP_OPS_SERVICE) as AppOpsManager
             @Suppress("DEPRECATION")
@@ -219,7 +231,7 @@ class HomeWatcher : Service() {
         fun sync(ctx: Context, lookBack: Boolean = false) {
             val i = Intent(ctx, HomeWatcher::class.java).putExtra(EXTRA_LOOK_BACK, lookBack)
             try {
-                if (Prefs(ctx).replaceHome && hasAccess(ctx)) {
+                if (wanted(ctx)) {
                     if (Build.VERSION.SDK_INT >= 26) ctx.startForegroundService(i) else ctx.startService(i)
                 } else ctx.stopService(i)
             } catch (e: Throwable) { }
@@ -234,16 +246,17 @@ class HomeWatcher : Service() {
             while (ev.hasNextEvent()) {
                 ev.getNextEvent(e)
                 if (e.eventType != UsageEvents.Event.MOVE_TO_FOREGROUND || e.timeStamp < since) continue
-                if (e.packageName != AMAZON && e.packageName != ctx.packageName) other = true
+                if (!Platform.isStockHomePkg(ctx, e.packageName) && e.packageName != ctx.packageName) other = true
             }
             other
         } catch (e: Throwable) { false }
 
         fun openAmazonHome(ctx: Context) {
+            val home = Platform.stockHome(ctx) ?: return
             allowAmazonUntil = SystemClock.elapsedRealtime() + 3000
             userChoseAmazon = true
             choseAmazonAt = System.currentTimeMillis()
-            val i = Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_HOME).setPackage(AMAZON)
+            val i = Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_HOME).setPackage(home)
                 .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
             try { ctx.startActivity(i) } catch (e: Throwable) { userChoseAmazon = false }
         }
