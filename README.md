@@ -14,10 +14,12 @@ GlassOS is free software under the GNU GPL v3.
 |---|---|
 | ![Control Center](docs/screenshots/control-center.png) | ![Settings](docs/screenshots/settings.png) |
 | Control Center (Menu) | Settings |
-| ![App drawer](docs/screenshots/drawer.png) | ![First-run setup: permissions](docs/screenshots/setup.png) |
-| App drawer | First-run setup, one-tap permissions |
+| ![First-run setup: permissions](docs/screenshots/setup.png) | |
+| First-run setup, one-tap permissions | |
 
-Taken on the Android TV emulator at 1920x1080, which has only a few apps installed. Top Shelf art from TMDB.
+Home and Control Center are from a Fire TV Stick 4K using the Apple TV (unofficial) Top Shelf source. TMDB is the
+default source and looks the same, with trending titles from your own streaming apps. Settings and setup were taken
+on the Android TV emulator.
 
 ## Features
 
