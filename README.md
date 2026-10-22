@@ -74,6 +74,16 @@ adb install GlassOS-v1.0.1-beta.apk
 adb shell am start -n io.github.abhishekkaisar.glassos/.MainActivity
 ```
 
+## Set it up with an AI coding agent
+
+Not comfortable with adb? Open an AI coding agent (Claude Code, Codex, Cursor, Gemini CLI and similar) on your
+computer and tell it:
+
+> Set up GlassOS on my TV using AGENTS.md from github.com/AbhishekKaisar/glassos-tv
+
+[AGENTS.md](AGENTS.md) walks the agent through it step by step: it asks which TV you have, helps you turn on
+debugging, installs only adb and the signature-checked GlassOS APK, and explains each step first.
+
 ## Set GlassOS as your home screen
 
 ### Android TV and Google TV
