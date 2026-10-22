@@ -1,0 +1,69 @@
+name: Device report
+description: Tell us how GlassOS runs on your TV or streaming stick
+title: "Device report: "
+labels: ["device report"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thank you for testing. Reports from real devices are the most useful thing right now.
+  - type: dropdown
+    id: result
+    attributes:
+      label: Result
+      options:
+        - It works
+        - It partly works
+        - It does not work
+    validations:
+      required: true
+  - type: input
+    id: device
+    attributes:
+      label: Device model
+      description: For example Chromecast with Google TV, Fire TV Stick 4K Max, Xiaomi Mi Box S.
+    validations:
+      required: true
+  - type: dropdown
+    id: platform
+    attributes:
+      label: Platform
+      options:
+        - Fire TV
+        - Android TV
+        - Google TV
+        - Other
+    validations:
+      required: true
+  - type: input
+    id: os_version
+    attributes:
+      label: Fire OS or Android version
+    validations:
+      required: true
+  - type: input
+    id: glassos_version
+    attributes:
+      label: GlassOS version
+    validations:
+      required: true
+  - type: dropdown
+    id: home
+    attributes:
+      label: Does the Home button open GlassOS?
+      options:
+        - Yes, straight away
+        - Yes, after a moment (GlassOS covers the stock home)
+        - No
+        - Not tried
+    validations:
+      required: true
+  - type: textarea
+    id: details
+    attributes:
+      label: What worked and what did not
+      description: Setup, Top Shelf, Control Center, the Home button, one-tap permissions. Anything odd.
+  - type: textarea
+    id: extra
+    attributes:
+      label: Screenshot or logcat (optional)

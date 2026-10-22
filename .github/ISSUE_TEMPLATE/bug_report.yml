@@ -1,0 +1,75 @@
+name: Bug report
+description: Something in GlassOS does not work as it should
+labels: ["bug", "needs-info"]
+body:
+  - type: input
+    id: device
+    attributes:
+      label: Device model
+      description: For example Fire TV Stick 4K, Chromecast with Google TV, Nvidia Shield.
+    validations:
+      required: true
+  - type: dropdown
+    id: platform
+    attributes:
+      label: Platform
+      options:
+        - Fire TV
+        - Android TV
+        - Google TV
+        - Other
+    validations:
+      required: true
+  - type: input
+    id: os_version
+    attributes:
+      label: Fire OS or Android version
+      description: "Fire TV: Settings > My Fire TV > About. Android TV and Google TV: Settings > Device Preferences > About."
+    validations:
+      required: true
+  - type: input
+    id: glassos_version
+    attributes:
+      label: GlassOS version
+      description: For example 1.0.1-beta.
+    validations:
+      required: true
+  - type: dropdown
+    id: area
+    attributes:
+      label: Which part
+      options:
+        - Setup
+        - Home
+        - Top Shelf
+        - Control Center
+        - Home button
+        - Other
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      placeholder: |
+        1. Press Home
+        2. ...
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected
+    validations:
+      required: true
+  - type: textarea
+    id: actual
+    attributes:
+      label: Actual
+    validations:
+      required: true
+  - type: textarea
+    id: extra
+    attributes:
+      label: Screenshot or logcat (optional)
+      description: "Drag a screenshot in, or paste logcat output. Screenshot: `adb exec-out screencap -p > screen.png`. Log: `adb logcat -d | grep -i glassos`."
