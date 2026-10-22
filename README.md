@@ -6,6 +6,8 @@ app drawer and a Control Center, all driven with the remote's D-pad.
 
 GlassOS is free software under the GNU GPL v3.
 
+![Before and after: the Fire TV home becomes GlassOS](docs/glassos-demo.gif)
+
 ## Screenshots
 
 ![Home: the Top Shelf with the glass shelf of apps](docs/screenshots/home.png)
