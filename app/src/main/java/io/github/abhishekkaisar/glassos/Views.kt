@@ -309,7 +309,8 @@ class TileView(ctx: Context, val cardW: Int, val cardH: Int, private val labelH:
 
         if (a != null && labelH > 0 && labelAlpha > 0.004f) {
             text.alpha = ((0.72f + 0.28f * f) * labelAlpha * 255).toInt()
-            val label = TextUtils.ellipsize(a.label, text, w * 1.3f, TextUtils.TruncateAt.END).toString()
+            // At most 1.1x the card: wider labels on the first column ran off the screen's left edge when focused.
+            val label = TextUtils.ellipsize(a.label, text, w * 1.1f, TextUtils.TruncateAt.END).toString()
             // Label sits below the scaled tile: compensate so it clears the 1.15x card.
             c.drawText(label, w / 2f, h + labelH * 0.62f + h * 0.06f * f, text)
         }

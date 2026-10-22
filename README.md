@@ -6,6 +6,19 @@ app drawer and a Control Center, all driven with the remote's D-pad.
 
 GlassOS is free software under the GNU GPL v3.
 
+## Screenshots
+
+![Home: the Top Shelf with the glass shelf of apps](docs/screenshots/home.png)
+
+| | |
+|---|---|
+| ![Control Center](docs/screenshots/control-center.png) | ![Settings](docs/screenshots/settings.png) |
+| Control Center (Menu) | Settings |
+| ![App drawer](docs/screenshots/drawer.png) | ![First-run setup: permissions](docs/screenshots/setup.png) |
+| App drawer | First-run setup, one-tap permissions |
+
+Taken on the Android TV emulator at 1920x1080, which has only a few apps installed. Top Shelf art from TMDB.
+
 ## Features
 
 - **Top Shelf**: full-screen art of trending series and films, with title logos. Titles on the streaming apps you
@@ -76,13 +89,15 @@ If you prefer a computer, these are the same grants:
 P=io.github.abhishekkaisar.glassos
 adb shell appops set $P GET_USAGE_STATS allow
 adb shell appops set $P SYSTEM_ALERT_WINDOW allow
-adb shell settings put secure enabled_notification_listeners $P/$P.MediaListener
+adb shell cmd notification allow_listener $P/$P.MediaListener
 adb shell dpm set-active-admin $P/.AdminReceiver
 adb shell pm grant $P android.permission.READ_EXTERNAL_STORAGE
 ```
 
-If another app already has notification access, append to the list with a colon instead of replacing it:
-check first with `adb shell settings get secure enabled_notification_listeners`.
+That notification command is for Fire OS 7 and later. On Fire OS 5 and 6 use
+`adb shell settings put secure enabled_notification_listeners $P/$P.MediaListener` instead, and if another app
+already has notification access, append to the list with a colon rather than replacing it (check first with
+`adb shell settings get secure enabled_notification_listeners`).
 
 ## Top Shelf sources
 

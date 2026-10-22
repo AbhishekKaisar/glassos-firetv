@@ -45,7 +45,7 @@ class SetupView(private val home: HomeScreen) : FrameLayout(home.ctx) {
 
     private val scrim = View(context).apply { setBackgroundColor(0x8C000000.toInt()) }
     private val panelW = Backdrop.screenW * 64 / 100
-    private val panelH = Backdrop.screenH * 80 / 100
+    private val panelH = Backdrop.screenH * 88 / 100
     val panel = GlassBox(context, dp(40f)).apply {
         glass.tint = 0.10f; glass.dark = 0.34f; glass.sheen = 0.08f; shadowAlpha = 0.5f
     }
@@ -153,6 +153,9 @@ class SetupView(private val home: HomeScreen) : FrameLayout(home.ctx) {
 
     private fun show(s: Step) {
         step = s
+        // Steps with a scrolling list clip to the body, or the list draws over the buttons; the others leave room
+        // for focus scaling.
+        body.clipChildren = s == Step.COUNTRY || s == Step.APPS
         body.removeAllViews()
         nav.removeAllViews()
         val i = flow.indexOf(s)
@@ -181,7 +184,7 @@ class SetupView(private val home: HomeScreen) : FrameLayout(home.ctx) {
             if (primary) titleView.typeface = Fonts.medium
             onClick = click
         }
-        nav.addView(b, LinearLayout.LayoutParams(dpi(190f), dpi(46f)).apply { leftMargin = dpi(8f); rightMargin = dpi(8f) })
+        nav.addView(b, LinearLayout.LayoutParams(dpi(164f), dpi(46f)).apply { leftMargin = dpi(8f); rightMargin = dpi(8f) })
         return b
     }
 
@@ -207,12 +210,12 @@ class SetupView(private val home: HomeScreen) : FrameLayout(home.ctx) {
         val box = LinearLayout(context).apply { orientation = LinearLayout.VERTICAL; gravity = Gravity.CENTER_HORIZONTAL; clipChildren = false; clipToPadding = false }
         val field = Field(context, "Your name")
         field.value = name
-        box.addView(field, LinearLayout.LayoutParams(dpi(420f), dpi(52f)))
+        box.addView(field, LinearLayout.LayoutParams(dpi(420f), dpi(46f)))
         val kb = Keyboard(context, digits = false) { k ->
             name = edit(name, k, 24)
             field.value = name
         }
-        box.addView(kb, LinearLayout.LayoutParams(-2, -2).apply { topMargin = dpi(18f) })
+        box.addView(kb, LinearLayout.LayoutParams(-2, -2).apply { topMargin = dpi(12f) })
         body.addView(box, LayoutParams(-1, -2, Gravity.CENTER))
         if (!single) navButton("Back") { back() }
         val go = navButton(continueLabel(), primary = true) { next() }
@@ -222,17 +225,17 @@ class SetupView(private val home: HomeScreen) : FrameLayout(home.ctx) {
 
     private fun keyStep() {
         title.text = "TMDB API key"
-        subtitle.text = "Paste-free entry: type your TMDB API key (v3) or read access token. Leave it empty to use the built-in key, if any."
+        subtitle.text = "Your TMDB API key (v3) or read access token. Leave it empty for the built-in key."
         val box = LinearLayout(context).apply { orientation = LinearLayout.VERTICAL; gravity = Gravity.CENTER_HORIZONTAL; clipChildren = false; clipToPadding = false }
         val field = Field(context, "API key")
         field.value = keyText
         field.small = true
-        box.addView(field, LinearLayout.LayoutParams(dpi(560f), dpi(52f)))
-        val kb = Keyboard(context, digits = true) { k ->
+        box.addView(field, LinearLayout.LayoutParams(dpi(520f), dpi(46f)))
+        val kb = Keyboard(context, digits = true, capitalise = false) { k ->
             keyText = edit(keyText, k, 400, allowSpace = false)
             field.value = keyText
         }
-        box.addView(kb, LinearLayout.LayoutParams(-2, -2).apply { topMargin = dpi(18f) })
+        box.addView(kb, LinearLayout.LayoutParams(-2, -2).apply { topMargin = dpi(12f) })
         body.addView(box, LayoutParams(-1, -2, Gravity.CENTER))
         navButton("Cancel") { back() }
         val go = navButton("Save", primary = true) { next() }
@@ -254,12 +257,12 @@ class SetupView(private val home: HomeScreen) : FrameLayout(home.ctx) {
         val scroll = HorizontalScrollView(context).apply {
             isHorizontalScrollBarEnabled = false; overScrollMode = View.OVER_SCROLL_NEVER; clipChildren = false; clipToPadding = false
         }
-        row.setPadding(dpi(16f), dpi(16f), dpi(16f), dpi(16f))
+        row.setPadding(dpi(16f), dpi(10f), dpi(16f), dpi(10f))
         scroll.addView(row, ViewGroup.LayoutParams(-2, -2))
         val box = LinearLayout(context).apply { orientation = LinearLayout.VERTICAL; gravity = Gravity.CENTER_HORIZONTAL; clipChildren = false; clipToPadding = false }
-        val preview = AvatarPreview(context, dpi(120f))
-        box.addView(preview, LinearLayout.LayoutParams(dpi(120f), dpi(120f)))
-        box.addView(scroll, LinearLayout.LayoutParams(-1, -2).apply { topMargin = dpi(14f) })
+        val preview = AvatarPreview(context, dpi(80f))
+        box.addView(preview, LinearLayout.LayoutParams(dpi(80f), dpi(80f)))
+        box.addView(scroll, LinearLayout.LayoutParams(-2, -2).apply { topMargin = dpi(8f) })
         val note = text("", 13f, 0x99FFFFFF.toInt()).apply { gravity = Gravity.CENTER }
         box.addView(note, LinearLayout.LayoutParams(-1, -2).apply { topMargin = dpi(4f) })
         body.addView(box, LayoutParams(-1, -2, Gravity.CENTER))
@@ -418,27 +421,28 @@ class SetupView(private val home: HomeScreen) : FrameLayout(home.ctx) {
 
     private var grantRows = ArrayList<Pair<Grants.Grant, RowView>>()
     private var granting = false
+    /** Set while an attempt waits on the TV's prompt: Set Up again starts a new attempt (the prompt may have been cancelled). */
+    private var waitingForPrompt = false
+    private var attempt = 0
 
     private fun permissionsStep() {
         title.text = "Permissions"
-        subtitle.text = "GlassOS uses the TV's own ADB to give itself a few permissions, once. Everything still works without them, with fewer features."
+        subtitle.text = "GlassOS gives itself a few permissions once, over the TV's own ADB."
         val box = LinearLayout(context).apply { orientation = LinearLayout.VERTICAL; clipChildren = false; clipToPadding = false }
-        val howTo = text(
-            "1. Open Settings > My Fire TV > Developer options and turn on ADB debugging.\n" +
-            "    No Developer options? Open Settings > My Fire TV > About and press OK on your device name 7 times.\n" +
-            "2. Choose Set Up below, then choose Allow when the TV asks \"Allow USB debugging?\" (tick Always allow).",
-            14f)
-        box.addView(howTo, LinearLayout.LayoutParams(-1, -2).apply { bottomMargin = dpi(12f) })
+        // The how-to, replaced by progress and results once Set Up is chosen.
+        val status = text(
+            "Turn on ADB debugging in Settings > My Fire TV > Developer options, choose Set Up, then choose Allow " +
+            "when the TV asks \"Allow USB debugging?\" (tick Always allow). Everything works without these, with less.",
+            14f, 0xD9FFFFFF.toInt()).apply { gravity = Gravity.CENTER_HORIZONTAL }
+        box.addView(status, LinearLayout.LayoutParams(-1, -2).apply { bottomMargin = dpi(10f) })
         grantRows = ArrayList()
         for (g in Grants.ALL) {
             val r = RowView(context, g.title).apply { isFocusable = false; isClickable = false }
             r.titleView.textSize = 16f
             r.valueView.textSize = 15f
-            box.addView(r, LinearLayout.LayoutParams(-1, dpi(38f)).apply { bottomMargin = dpi(4f) })
+            box.addView(r, LinearLayout.LayoutParams(-1, dpi(34f)).apply { bottomMargin = dpi(3f) })
             grantRows.add(g to r)
         }
-        val status = text("", 14f, 0xCCFFFFFF.toInt()).apply { gravity = Gravity.CENTER }
-        box.addView(status, LinearLayout.LayoutParams(-1, -2).apply { topMargin = dpi(8f) })
         body.addView(box, LayoutParams(-1, -2, Gravity.CENTER_VERTICAL))
         refreshGrants()
         if (!single) navButton("Back") { back() }
@@ -457,31 +461,37 @@ class SetupView(private val home: HomeScreen) : FrameLayout(home.ctx) {
     }
 
     private fun runGrants(status: TextView) {
-        if (granting) return
+        if (granting && !waitingForPrompt) return
         if (Grants.allGranted(context)) { status.text = "All set: every permission is granted."; return }
         granting = true
+        waitingForPrompt = false
+        val id = ++attempt
         status.text = "Connecting to the TV's ADB…"
         Thread {
             var msg: String
             try {
                 AdbClient.connect(context, onPrompt = {
-                    ui.post { status.text = "Choose Allow on the TV's prompt (tick Always allow)." }
+                    ui.post { if (id == attempt) { waitingForPrompt = true; status.text = "Choose Allow on the TV's prompt (tick Always allow)." } }
                 }).use { adb ->
-                    ui.post { status.text = "Connected. Granting…" }
+                    if (id != attempt) return@Thread
+                    ui.post { if (id == attempt) { waitingForPrompt = false; status.text = "Connected. Granting…" } }
                     val r = Grants.run(context, adb)
                     val missing = r.ok.filterValues { !it }.keys.map { it.title }
                     msg = if (missing.isEmpty()) "All set: every permission is granted. You can turn ADB debugging off again."
                     else "Could not grant: ${missing.joinToString(", ")}. ${r.log.lineSequence().firstOrNull() ?: ""}"
                 }
             } catch (e: java.net.ConnectException) {
-                msg = "Could not reach ADB. Turn on ADB debugging in Developer options, then try again."
+                msg = "Could not reach ADB. Turn on ADB debugging in Developer options, then try again. No Developer options? " +
+                    "Open Settings > My Fire TV > About and press OK on your device name 7 times."
             } catch (e: java.net.SocketTimeoutException) {
                 msg = "No answer from the TV's prompt. Try again and choose Allow."
             } catch (e: Throwable) {
                 msg = "ADB refused the connection (${e.javaClass.simpleName}). Turn ADB debugging off and on, then try again."
             }
             ui.post {
+                if (id != attempt) return@post
                 granting = false
+                waitingForPrompt = false
                 if (!isOpen) return@post
                 status.text = msg
                 refreshGrants()
@@ -591,8 +601,8 @@ class SetupView(private val home: HomeScreen) : FrameLayout(home.ctx) {
  * On-screen keyboard for the D-pad: letters (with Shift), optionally digits, space, delete and clear. Each key
  * turns white with dark text when focused, like the other glass buttons.
  */
-class Keyboard(ctx: Context, digits: Boolean, private val onKey: (String) -> Unit) : LinearLayout(ctx) {
-    private var shift = true
+class Keyboard(ctx: Context, digits: Boolean, private val capitalise: Boolean = true, private val onKey: (String) -> Unit) : LinearLayout(ctx) {
+    private var shift = capitalise
     private val letterKeys = ArrayList<Key>()
     private val rows = ArrayList<List<Key>>()
 
@@ -626,7 +636,7 @@ class Keyboard(ctx: Context, digits: Boolean, private val onKey: (String) -> Uni
             else -> onKey(if (k.value.length == 1 && k.value[0].isLetter() && shift) k.value.uppercase() else k.value)
         }
         if (shift && k.value.length == 1 && k.value[0].isLetter()) { shift = false; updateCase() }
-        if (k.value == " ") { shift = true; updateCase() }
+        if (k.value == " " && capitalise) { shift = true; updateCase() }
     }
 
     private fun updateCase() { letterKeys.forEach { it.label = if (shift) it.value.uppercase() else it.value } }
@@ -664,7 +674,7 @@ class Keyboard(ctx: Context, digits: Boolean, private val onKey: (String) -> Uni
         const val SHIFT = "\u0001shift"
         const val DEL = "\u0001del"
         const val CLEAR = "\u0001clear"
-        private const val KEY = 40f
-        private const val GAP = 6f
+        private const val KEY = 36f
+        private const val GAP = 5f
     }
 }

@@ -22,8 +22,9 @@ object Grants {
         Grant("Display over other apps", "Shows the home at once after Home", { canDrawOverlays(it) }) { c ->
             listOf("appops set ${pkg(c)} SYSTEM_ALERT_WINDOW allow")
         },
-        // The secure setting works on every Fire OS version (`cmd notification allow_listener` needs API 26+). It is
-        // appended to, never replaced, so other listeners stay enabled.
+        // API 26+ (Fire OS 7 and 8) keeps the listener list itself and ignores writes to the secure setting, so it
+        // needs `cmd notification allow_listener`. Older versions read the setting, which is appended to, never
+        // replaced, so other listeners stay enabled.
         Grant("Notification access", "Now Playing and Do Not Disturb", { listenerEnabled(it) }) { listOf("LISTENERS") },
         Grant("Device admin", "Sleep and the sleep timer", { Power.adminActive(it) }) { c ->
             listOf("dpm set-active-admin ${Power.admin(c).flattenToString()}")
@@ -39,8 +40,13 @@ object Grants {
         ctx.checkSelfPermission(Manifest.permission.READ_EXTERNAL_STORAGE) == PackageManager.PERMISSION_GRANTED
 
     fun listenerEnabled(ctx: Context): Boolean = try {
-        val v = Settings.Secure.getString(ctx.contentResolver, "enabled_notification_listeners") ?: ""
-        v.split(':').any { it == MediaListener.component(ctx).flattenToString() || it == MediaListener.component(ctx).flattenToShortString() }
+        val comp = MediaListener.component(ctx)
+        if (Build.VERSION.SDK_INT >= 27 &&
+            ctx.getSystemService(android.app.NotificationManager::class.java).isNotificationListenerAccessGranted(comp)) true
+        else {
+            val v = Settings.Secure.getString(ctx.contentResolver, "enabled_notification_listeners") ?: ""
+            v.split(':').any { it == comp.flattenToString() || it == comp.flattenToShortString() }
+        }
     } catch (e: Throwable) { false }
 
     fun allGranted(ctx: Context) = ALL.all { it.isGranted(ctx) }
@@ -68,6 +74,7 @@ object Grants {
 
     private fun listenerCommand(ctx: Context, adb: AdbClient): String {
         val comp = MediaListener.component(ctx).flattenToString()
+        if (Build.VERSION.SDK_INT >= 26) return "cmd notification allow_listener $comp"
         val cur = try { adb.shell("settings get secure enabled_notification_listeners").trim() } catch (e: Throwable) { "" }
         val list = cur.split(':').filter { it.isNotBlank() && it != "null" && it != comp }
         return "settings put secure enabled_notification_listeners " + (list + comp).joinToString(":")
@@ -77,7 +84,8 @@ object Grants {
     fun manualCommands(ctx: Context): List<String> = listOf(
         "adb shell appops set ${pkg(ctx)} GET_USAGE_STATS allow",
         "adb shell appops set ${pkg(ctx)} SYSTEM_ALERT_WINDOW allow",
-        "adb shell settings put secure enabled_notification_listeners ${MediaListener.component(ctx).flattenToString()}",
+        if (Build.VERSION.SDK_INT >= 26) "adb shell cmd notification allow_listener ${MediaListener.component(ctx).flattenToString()}"
+        else "adb shell settings put secure enabled_notification_listeners ${MediaListener.component(ctx).flattenToString()}",
         "adb shell dpm set-active-admin ${Power.admin(ctx).flattenToString()}",
         "adb shell pm grant ${pkg(ctx)} android.permission.READ_EXTERNAL_STORAGE"
     )

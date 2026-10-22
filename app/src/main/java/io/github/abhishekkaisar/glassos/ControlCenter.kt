@@ -575,7 +575,7 @@ class ControlCenter(private val home: HomeScreen) : FrameLayout(home.ctx) {
         val acc = button(Glyph.ACCESS, "Accessibility") { open(FireIntents.accessibility(), FireIntents.SETTINGS_PKG, "Choose Accessibility") }
         val pc = button(Glyph.LOCK, "Parental") { open(FireIntents.parental(), "com.amazon.tv.parentalcontrols", "Choose Preferences, then Parental Controls") }
         val fire = button(Glyph.OPEN, "TV Settings") { close(instant = true) { home.openFireSettings() } }
-        val gear = button(Glyph.GEAR, "GlassOS Settings") { close(instant = true) { home.openSettings() } }
+        val gear = button(Glyph.GEAR, "GlassOS") { close(instant = true) { home.openSettings() } }
         body.addView(grid(listOf(power, wifi, dnd, audio, timer, pads, acc, pc, fire, gear)))
     }
 

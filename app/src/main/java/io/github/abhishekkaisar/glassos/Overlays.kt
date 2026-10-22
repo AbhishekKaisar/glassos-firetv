@@ -120,19 +120,22 @@ class SettingsView(private val act: HomeScreen) : FrameLayout(act.ctx) {
         list.addView(uninstallRow, rowLp())
         list.addView(aboutRow, rowLp())
 
-        nameRow.onClick = { act.openSetup(SetupView.Step.NAME, single = true) }
-        photoRow.onClick = { act.openSetup(SetupView.Step.PHOTO, single = true) }
-        countryRow.onClick = { act.openSetup(SetupView.Step.COUNTRY, single = true) }
-        keyRow.onClick = { act.openSetup(SetupView.Step.TMDB_KEY, single = true) }
-        appsRow.onClick = { act.openSetup(SetupView.Step.APPS, single = true) }
-        permsRow.onClick = { act.openSetup(SetupView.Step.PERMISSIONS, single = true) }
-        setupRow.onClick = { act.openSetup() }
-        aboutRow.onClick = { act.openSetup(SetupView.Step.ABOUT, single = true) }
+        fun step(row: View, s: SetupView.Step) { resumeRow = row; act.openSetup(s, single = true) }
+        nameRow.onClick = { step(nameRow, SetupView.Step.NAME) }
+        photoRow.onClick = { step(photoRow, SetupView.Step.PHOTO) }
+        countryRow.onClick = { step(countryRow, SetupView.Step.COUNTRY) }
+        keyRow.onClick = { step(keyRow, SetupView.Step.TMDB_KEY) }
+        appsRow.onClick = { step(appsRow, SetupView.Step.APPS) }
+        permsRow.onClick = { step(permsRow, SetupView.Step.PERMISSIONS) }
+        setupRow.onClick = { resumeRow = setupRow; act.openSetup() }
+        aboutRow.onClick = { step(aboutRow, SetupView.Step.ABOUT) }
         // Device admin blocks uninstalling; an app may always remove its own admin.
         uninstallRow.onClick = {
             Power.removeAdmin(context)
             act.setReplaceHome(false)
             updateValues()
+            // Removing the admin lands a moment later; refresh the permissions count once it has.
+            postDelayed({ if (isOpen) updateValues() }, 800)
             android.widget.Toast.makeText(context, "Device admin removed and Fire TV home restored. You can uninstall GlassOS now.", android.widget.Toast.LENGTH_LONG).show()
         }
         shelfRow.onClick = {
@@ -202,6 +205,18 @@ class SettingsView(private val act: HomeScreen) : FrameLayout(act.ctx) {
         if (chosen != null) thumbsScroll.post { thumbsScroll.scrollTo((chosen.left - dpi(18f)).coerceAtLeast(0), 0) }
     }
 
+    /** The row that opened a setup step; Settings comes back with it focused rather than at the top. */
+    private var resumeRow: View? = null
+
+    /** Focuses the row a setup step was opened from, or the first row. */
+    private fun focusStart() {
+        val r = resumeRow
+        resumeRow = null
+        if (r != null) { r.requestFocus(); return }
+        scroll.scrollTo(0, 0)
+        nameRow.requestFocus()
+    }
+
     fun open(instant: Boolean = false) {
         if (isOpen) return
         isOpen = true
@@ -211,8 +226,7 @@ class SettingsView(private val act: HomeScreen) : FrameLayout(act.ctx) {
         if (instant) {
             scrim.alpha = 1f
             panel.translationX = 0f
-            scroll.scrollTo(0, 0)
-            nameRow.requestFocus()
+            focusStart()
             return
         }
         scrim.alpha = 0f
@@ -224,8 +238,7 @@ class SettingsView(private val act: HomeScreen) : FrameLayout(act.ctx) {
             .setUpdateListener { invalidateDeep(panel) }
             .withEndAction { invalidateDeep(panel) }
             .start()
-        scroll.scrollTo(0, 0)
-        nameRow.requestFocus()
+        focusStart()
     }
 
     fun close(instant: Boolean = false, after: (() -> Unit)? = null) {
