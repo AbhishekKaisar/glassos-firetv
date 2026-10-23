@@ -29,17 +29,17 @@ import java.util.Locale
 private const val REQ_HOME = 8
 
 /**
- * First-run setup in a centred glass panel over the Top Shelf, driven with the D-pad: name (on-screen keyboard),
- * profile photo, country, the apps on the top row, and one-tap permissions over the TV's own ADB. Single steps
- * also open from Settings ([open] with single = true).
+ * First-run setup in a centred glass panel over the Top Shelf, driven with the D-pad: keyboard layout, name
+ * (on-screen keyboard), profile photo, country, the apps on the top row, and one-tap permissions over the TV's
+ * own ADB. Single steps also open from Settings ([open] with single = true).
  */
 class SetupView(private val home: HomeScreen) : FrameLayout(home.ctx) {
-    enum class Step { WELCOME, NAME, PHOTO, COUNTRY, APPS, PERMISSIONS, HOME, DONE, TMDB_KEY, ABOUT, HIDDEN }
+    enum class Step { WELCOME, KEYBOARD, NAME, PHOTO, COUNTRY, APPS, PERMISSIONS, HOME, DONE, TMDB_KEY, ABOUT, HIDDEN }
 
     /** Fire TV cannot change its home app, so the home step is for Android TV and Google TV only. */
     private val fireTv = Platform.isFireTv(context)
-    private val flow = listOfNotNull(Step.WELCOME, Step.NAME, Step.PHOTO, Step.COUNTRY, Step.APPS, Step.PERMISSIONS,
-        if (fireTv) null else Step.HOME, Step.DONE)
+    private val flow = listOfNotNull(Step.WELCOME, Step.KEYBOARD, Step.NAME, Step.PHOTO, Step.COUNTRY, Step.APPS,
+        Step.PERMISSIONS, if (fireTv) null else Step.HOME, Step.DONE)
     var isOpen = false
         private set
     private var step = Step.WELCOME
@@ -67,6 +67,7 @@ class SetupView(private val home: HomeScreen) : FrameLayout(home.ctx) {
 
     // Values edited across steps, saved when setup finishes (or when a single step is confirmed).
     private var name = ""
+    private var kbLayout = Keyboard.Layout.ABC
     private var photo: File? = null
     private var photoCleared = false
     private var country = ""
@@ -97,6 +98,7 @@ class SetupView(private val home: HomeScreen) : FrameLayout(home.ctx) {
         this.single = single
         this.onClosed = onClosed
         name = prefs.name
+        kbLayout = Keyboard.Layout.from(prefs.keyboard)
         photo = null; photoCleared = false
         country = prefs.country.ifEmpty { suggestedCountry() }
         picked.clear()
@@ -146,6 +148,7 @@ class SetupView(private val home: HomeScreen) : FrameLayout(home.ctx) {
 
     private fun save(s: Step) {
         when (s) {
+            Step.KEYBOARD -> prefs.keyboard = kbLayout.id
             Step.NAME -> { prefs.name = name.trim().take(24); home.reloadProfile() }
             Step.PHOTO -> {
                 val f = photo
@@ -173,6 +176,7 @@ class SetupView(private val home: HomeScreen) : FrameLayout(home.ctx) {
         dots.invalidate()
         when (s) {
             Step.WELCOME -> welcome()
+            Step.KEYBOARD -> keyboardStep()
             Step.NAME -> nameStep()
             Step.PHOTO -> photoStep()
             Step.COUNTRY -> countryStep()
@@ -215,6 +219,29 @@ class SetupView(private val home: HomeScreen) : FrameLayout(home.ctx) {
         navButton("Get Started", primary = true) { next() }.requestFocus()
     }
 
+    private fun keyboardStep() {
+        title.text = "On-screen keyboard"
+        subtitle.text = "ABC puts letters in order. QWERTY matches a computer keyboard. You can change this later in Settings."
+        val list = LinearLayout(context).apply { orientation = LinearLayout.VERTICAL; clipChildren = false; clipToPadding = false }
+        val rows = ArrayList<Pair<Keyboard.Layout, RowView>>()
+        for (l in Keyboard.Layout.entries) {
+            val r = RowView(context, l.label).apply { id = View.generateViewId() }
+            r.valueView.text = if (l == kbLayout) "✓" else l.hint
+            r.onClick = {
+                kbLayout = l
+                prefs.keyboard = l.id
+                rows.forEach { (layout, v) -> v.valueView.text = if (layout == l) "✓" else layout.hint }
+            }
+            list.addView(r, LinearLayout.LayoutParams(-1, dpi(56f)).apply { bottomMargin = dpi(8f) })
+            rows.add(l to r)
+        }
+        body.addView(list, LayoutParams(dpi(520f), -2, Gravity.CENTER))
+        if (!single) navButton("Back") { back() }
+        val go = navButton(continueLabel(), primary = true) { next() }
+        val target = rows.firstOrNull { it.first == kbLayout }?.second ?: rows.firstOrNull()?.second
+        (target ?: go).requestFocus()
+    }
+
     private fun nameStep() {
         title.text = "What is your name?"
         subtitle.text = "Shown on your profile in Control Center."
@@ -222,7 +249,8 @@ class SetupView(private val home: HomeScreen) : FrameLayout(home.ctx) {
         val field = Field(context, "Your name")
         field.value = name
         box.addView(field, LinearLayout.LayoutParams(dpi(420f), dpi(46f)))
-        val kb = Keyboard(context, digits = false) { k ->
+        val kb = Keyboard(context, digits = false, layout = Keyboard.Layout.from(prefs.keyboard),
+            onLayout = { kbLayout = it; prefs.keyboard = it.id }) { k ->
             name = edit(name, k, 24)
             field.value = name
         }
@@ -242,7 +270,8 @@ class SetupView(private val home: HomeScreen) : FrameLayout(home.ctx) {
         field.value = keyText
         field.small = true
         box.addView(field, LinearLayout.LayoutParams(dpi(520f), dpi(46f)))
-        val kb = Keyboard(context, digits = true, capitalise = false) { k ->
+        val kb = Keyboard(context, digits = true, capitalise = false, layout = Keyboard.Layout.from(prefs.keyboard),
+            onLayout = { kbLayout = it; prefs.keyboard = it.id }) { k ->
             keyText = edit(keyText, k, 400, allowSpace = false)
             field.value = keyText
         }
@@ -763,41 +792,114 @@ class SetupView(private val home: HomeScreen) : FrameLayout(home.ctx) {
 }
 
 /**
- * On-screen keyboard for the D-pad: letters (with Shift), optionally digits, space, delete and clear. Each key
- * turns white with dark text when focused, like the other glass buttons.
+ * On-screen keyboard for the D-pad: ABC (letters in order) or QWERTY, with Shift, digits, space, delete and clear.
+ * The last-row layout key switches ABC and QWERTY. Each key turns white with dark text when focused.
  */
-class Keyboard(ctx: Context, digits: Boolean, private val capitalise: Boolean = true, private val onKey: (String) -> Unit) : LinearLayout(ctx) {
+class Keyboard(
+    ctx: Context,
+    private val digits: Boolean,
+    private val capitalise: Boolean = true,
+    layout: Layout = Layout.ABC,
+    private val onLayout: ((Layout) -> Unit)? = null,
+    private val onKey: (String) -> Unit
+) : LinearLayout(ctx) {
+    var layout: Layout = layout
+        private set
     private var shift = capitalise
     private val letterKeys = ArrayList<Key>()
     private val rows = ArrayList<List<Key>>()
+    private var downTarget: View? = null
 
     init {
         orientation = VERTICAL
+        gravity = Gravity.CENTER_HORIZONTAL
         clipChildren = false
         clipToPadding = false
-        val lines = ArrayList<List<String>>()
-        lines.add("abcdefghijklm".map { it.toString() })
-        lines.add("nopqrstuvwxyz".map { it.toString() })
-        lines.add(if (digits) "1234567890-_.".map { it.toString() } else "1234567890-.'".map { it.toString() })
-        for (l in lines) addRow(l.map { k -> Key(context, k, 1).also { if (k[0].isLetter()) letterKeys.add(it) } })
-        addRow(listOf(Key(context, SHIFT, 2), Key(context, " ", 5, "space"), Key(context, DEL, 3, "delete"), Key(context, CLEAR, 3, "clear")))
+        rebuild()
+    }
+
+    fun setLayout(l: Layout) {
+        if (l == layout) return
+        layout = l
+        rebuild()
+        onLayout?.invoke(l)
+        downTarget?.let { downTo(it) }
+        firstKey()?.requestFocus()
+    }
+
+    private class Line(val keys: List<String>, val indent: Float = 0f)
+
+    private fun letterLines(): List<Line> = when (layout) {
+        Layout.ABC -> listOf(
+            Line("abcdefghijklm".map { it.toString() }),
+            Line("nopqrstuvwxyz".map { it.toString() }),
+            Line((if (digits) "1234567890-_." else "1234567890-.'").map { it.toString() })
+        )
+        // Staggered like a real keyboard: numbers and Q aligned, A inset half a key, Z inset a key.
+        Layout.QWERTY -> listOf(
+            Line("1234567890".map { it.toString() }),
+            Line("qwertyuiop".map { it.toString() }),
+            Line("asdfghjkl".map { it.toString() }, indent = 0.5f),
+            Line((if (digits) "zxcvbnm-_." else "zxcvbnm.'").map { it.toString() }, indent = 1f)
+        )
+    }
+
+    private fun rebuild() {
+        removeAllViews()
+        letterKeys.clear()
+        rows.clear()
+        for (line in letterLines()) {
+            addRow(line.keys.map { k -> Key(context, k, 1).also { if (k[0].isLetter()) letterKeys.add(it) } }, line.indent)
+        }
+        if (layout == Layout.QWERTY) {
+            addRow(listOf(
+                Key(context, SHIFT, 2),
+                Key(context, " ", 2, "space"),
+                Key(context, DEL, 2, "delete"),
+                Key(context, CLEAR, 2, "clear"),
+                Key(context, LAYOUT, 2, layout.other.label)
+            ))
+        } else {
+            addRow(listOf(
+                Key(context, SHIFT, 2),
+                Key(context, " ", 4, "space"),
+                Key(context, DEL, 3, "delete"),
+                Key(context, CLEAR, 2, "clear"),
+                Key(context, LAYOUT, 2, layout.other.label)
+            ))
+        }
         updateCase()
     }
 
-    private fun addRow(keys: List<Key>) {
-        val row = LinearLayout(context).apply { orientation = HORIZONTAL; gravity = Gravity.CENTER; clipChildren = false; clipToPadding = false }
+    private fun addRow(keys: List<Key>, indent: Float = 0f) {
+        val units = if (layout == Layout.QWERTY) 10 else 13
+        val rowW = dpi(units * KEY + (units - 1) * GAP)
+        val row = LinearLayout(context).apply {
+            orientation = HORIZONTAL
+            gravity = Gravity.START or Gravity.CENTER_VERTICAL
+            clipChildren = false
+            clipToPadding = false
+        }
+        if (indent > 0f) {
+            val spacer = View(context).apply { isFocusable = false; isClickable = false }
+            row.addView(spacer, LayoutParams(dpi(indent * (KEY + GAP)), dpi(KEY), 0f))
+        }
         keys.forEachIndexed { i, k ->
             k.id = View.generateViewId()
             k.onClick = { press(k) }
             row.addView(k, LayoutParams(k.w, dpi(KEY), 0f).apply { if (i > 0) leftMargin = dpi(GAP) })
         }
-        addView(row, LayoutParams(-2, -2).apply { if (rows.isNotEmpty()) topMargin = dpi(GAP) })
+        addView(row, LayoutParams(rowW, -2).apply {
+            gravity = Gravity.CENTER_HORIZONTAL
+            if (rows.isNotEmpty()) topMargin = dpi(GAP)
+        })
         rows.add(keys)
     }
 
     private fun press(k: Key) {
         when (k.value) {
             SHIFT -> { shift = !shift; updateCase(); return }
+            LAYOUT -> { setLayout(layout.other); return }
             else -> onKey(if (k.value.length == 1 && k.value[0].isLetter() && shift) k.value.uppercase() else k.value)
         }
         if (shift && k.value.length == 1 && k.value[0].isLetter()) { shift = false; updateCase() }
@@ -809,7 +911,12 @@ class Keyboard(ctx: Context, digits: Boolean, private val capitalise: Boolean = 
     fun firstKey(): View? = rows.firstOrNull()?.firstOrNull()
 
     /** Down from the last row moves to [v] (the Continue button). */
-    fun downTo(v: View) { rows.lastOrNull()?.forEach { it.nextFocusDownId = v.id }; v.nextFocusUpId = rows.last()[1].id }
+    fun downTo(v: View) {
+        downTarget = v
+        rows.lastOrNull()?.forEach { it.nextFocusDownId = v.id }
+        val space = rows.lastOrNull()?.firstOrNull { it.value == " " } ?: rows.lastOrNull()?.getOrNull(1)
+        v.nextFocusUpId = space?.id ?: View.NO_ID
+    }
 
     class Key(ctx: Context, val value: String, units: Int, display: String? = null) : View(ctx) {
         val w = ctx.dpi(KEY * units + GAP * (units - 1))
@@ -829,9 +936,22 @@ class Keyboard(ctx: Context, digits: Boolean, private val capitalise: Boolean = 
             rect.set(0f, 0f, width.toFloat(), height.toFloat())
             fill.color = alphaOf(Color.WHITE, 0.12f + 0.85f * f)
             c.drawRoundRect(rect, dp(10f), dp(10f), fill)
-            t.textSize = dp(if (label.length > 1) 13f else 19f)
+            val long = label.length > 1
+            t.textSize = dp(if (!long) 19f else if (label.length > 5) 11f else 13f)
             t.color = lerpColor(Color.WHITE, 0xFF1C1C1E.toInt(), f)
+            c.save()
+            c.clipRect(rect)
             c.drawText(label, width / 2f, height / 2f - (t.ascent() + t.descent()) / 2, t)
+            c.restore()
+        }
+    }
+
+    enum class Layout(val id: String, val label: String, val hint: String) {
+        ABC("abc", "ABC", "Letters in order"),
+        QWERTY("qwerty", "QWERTY", "Like a computer");
+        val other: Layout get() = if (this == ABC) QWERTY else ABC
+        companion object {
+            fun from(id: String) = entries.firstOrNull { it.id == id } ?: ABC
         }
     }
 
@@ -839,6 +959,7 @@ class Keyboard(ctx: Context, digits: Boolean, private val capitalise: Boolean = 
         const val SHIFT = "\u0001shift"
         const val DEL = "\u0001del"
         const val CLEAR = "\u0001clear"
+        const val LAYOUT = "\u0001layout"
         private const val KEY = 36f
         private const val GAP = 5f
     }

@@ -1,5 +1,10 @@
 # Changelog
 
+## Unreleased
+
+- On-screen keyboard: choose ABC (letters in order) or QWERTY in first-run setup, and later in Settings. QWERTY is
+  staggered like a computer keyboard. The bottom-right key switches layouts while typing.
+
 ## 1.0.2-beta (2026-10-23)
 
 - Hold OK on any app to move it, like Apple TV: the tile lifts and wiggles, the arrows move it across the top row
