@@ -73,6 +73,9 @@ class AdbClient private constructor(private val socket: Socket) : AutoCloseable 
 
     override fun close() { try { socket.close() } catch (e: Throwable) { } }
 
+    /** adbd accepted the TCP connection, then closed it during the handshake ([stage] says when). */
+    class Closed(val stage: String, cause: Throwable) : java.io.IOException("adbd closed the connection $stage", cause)
+
     companion object {
         private const val CNXN = 0x4e584e43
         private const val AUTH = 0x48545541
@@ -102,6 +105,7 @@ class AdbClient private constructor(private val socket: Socket) : AutoCloseable 
             s.soTimeout = 10_000
             s.tcpNoDelay = true
             val c = AdbClient(s)
+            var stage = "before auth"
             try {
                 c.send(CNXN, VERSION, MAX_DATA, "host::GlassOS\u0000".toByteArray())
                 var sentSignature = false
@@ -113,9 +117,11 @@ class AdbClient private constructor(private val socket: Socket) : AutoCloseable 
                             if (!sentSignature) {
                                 sentSignature = true
                                 c.send(AUTH, AUTH_SIGNATURE, 0, sign(priv, m.data))
+                                stage = "after the signature"
                             } else {
                                 // Our key is unknown to the TV: send it, which shows the prompt.
                                 c.send(AUTH, AUTH_RSAPUBLICKEY, 0, pub)
+                                stage = "after the key"
                                 s.soTimeout = promptTimeoutMs
                                 onPrompt()
                             }
@@ -124,6 +130,12 @@ class AdbClient private constructor(private val socket: Socket) : AutoCloseable 
                 }
             } catch (e: Throwable) {
                 c.close()
+                // adbd hanging up mid-handshake: Fire OS since 7.6.6.9 and 8.1.0.3 (and late Fire OS 6) does this to
+                // every connection from an app on the TV itself.
+                if (e is java.io.EOFException || (e is java.net.SocketException && e !is java.net.ConnectException)) {
+                    WLog.i("adb: closed $stage: $e")
+                    throw Closed(stage, e)
+                }
                 throw e
             }
         }

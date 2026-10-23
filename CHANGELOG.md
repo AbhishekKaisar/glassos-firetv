@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+- One-tap permission setup: when the TV's ADB accepts the connection and then closes it (Fire OS since 7.6.6.9 and
+  8.1.0.3, and late Fire OS 6, block apps from using the TV's own ADB), setup now says so and points to the manual
+  grants from a computer. Other ADB errors show the exception and its message.
+
 ## 1.0.1-beta (2026-10-22)
 
 GlassOS now targets Android TV and Google TV as well as Fire TV. The repository moved to
