@@ -30,6 +30,7 @@ class SettingsView(private val act: HomeScreen) : FrameLayout(act.ctx) {
         clipToPadding = false
     }
     private val nameRow = RowView(context, "Name")
+    private val keyboardRow = RowView(context, "Keyboard")
     private val photoRow = RowView(context, "Profile photo")
     private val countryRow = RowView(context, "Country")
     private val shelfRow = RowView(context, "Top Shelf")
@@ -92,6 +93,7 @@ class SettingsView(private val act: HomeScreen) : FrameLayout(act.ctx) {
         list.addView(title)
         val rowLp = { LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, dpi(48f)).apply { bottomMargin = dpi(5f) } }
         list.addView(nameRow, rowLp())
+        list.addView(keyboardRow, rowLp())
         list.addView(photoRow, rowLp())
         list.addView(countryRow, rowLp())
         list.addView(shelfRow, rowLp())
@@ -127,6 +129,7 @@ class SettingsView(private val act: HomeScreen) : FrameLayout(act.ctx) {
 
         fun step(row: View, s: SetupView.Step) { resumeRow = row; act.openSetup(s, single = true) }
         nameRow.onClick = { step(nameRow, SetupView.Step.NAME) }
+        keyboardRow.onClick = { step(keyboardRow, SetupView.Step.KEYBOARD) }
         photoRow.onClick = { step(photoRow, SetupView.Step.PHOTO) }
         countryRow.onClick = { step(countryRow, SetupView.Step.COUNTRY) }
         keyRow.onClick = { step(keyRow, SetupView.Step.TMDB_KEY) }
@@ -176,6 +179,7 @@ class SettingsView(private val act: HomeScreen) : FrameLayout(act.ctx) {
         val hiddenCount = act.prefs.hidden.count { p -> HomeShare.apps?.any { it.pkg == p } ?: true }
         hiddenRow.valueView.text = if (hiddenCount == 0) "None" else "$hiddenCount"
         nameRow.valueView.text = act.prefs.name.ifEmpty { "Not set" }
+        keyboardRow.valueView.text = Keyboard.Layout.from(act.prefs.keyboard).label
         countryRow.valueView.text = act.prefs.country.ifEmpty { "Not set" }.let { c -> if (c.length == 2) java.util.Locale("", c).displayCountry else c }
         shelfRow.valueView.text = HeroRepo.sourceLabel(act.prefs.topShelf)
         keyRow.valueView.text = when {

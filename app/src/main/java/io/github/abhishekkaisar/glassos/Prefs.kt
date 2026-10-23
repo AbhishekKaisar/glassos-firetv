@@ -56,6 +56,11 @@ class Prefs(ctx: Context) {
         get() = sp.getString("name", "") ?: ""
         set(v) { sp.edit().putString("name", v).apply() }
 
+    /** On-screen keyboard: [Keyboard.Layout.ABC] (default, letters in order) or [Keyboard.Layout.QWERTY]. */
+    var keyboard: String
+        get() = sp.getString("keyboard", Keyboard.Layout.ABC.id) ?: Keyboard.Layout.ABC.id
+        set(v) { sp.edit().putString("keyboard", v).apply() }
+
     var setupDone: Boolean
         get() = sp.getBoolean("setupDone", false)
         set(v) { sp.edit().putBoolean("setupDone", v).apply() }
