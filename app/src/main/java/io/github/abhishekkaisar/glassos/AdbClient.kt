@@ -100,6 +100,16 @@ class AdbClient private constructor(private val socket: Socket) : AutoCloseable 
          */
         fun connect(ctx: Context, host: String = "127.0.0.1", port: Int = 5555, onPrompt: () -> Unit = {}, promptTimeoutMs: Int = 90_000): AdbClient {
             val (priv, pub) = keys(ctx)
+            // One retry when adbd hangs up mid-handshake, in case it was still dropping an earlier connection.
+            return try {
+                connectOnce(priv, pub, host, port, onPrompt, promptTimeoutMs)
+            } catch (e: Closed) {
+                Thread.sleep(1500)
+                connectOnce(priv, pub, host, port, onPrompt, promptTimeoutMs)
+            }
+        }
+
+        private fun connectOnce(priv: PrivateKey, pub: ByteArray, host: String, port: Int, onPrompt: () -> Unit, promptTimeoutMs: Int): AdbClient {
             val s = Socket()
             s.connect(InetSocketAddress(host, port), 3000)
             s.soTimeout = 10_000
