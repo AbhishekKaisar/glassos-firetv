@@ -45,6 +45,17 @@ object AppRepo {
         return out.take(max)
     }
 
+    /** [apps] in the [saved] order; apps missing from it (new installs) follow in their own order. */
+    fun arrange(apps: List<AppEntry>, saved: List<String>?): List<AppEntry> {
+        if (saved.isNullOrEmpty()) return apps
+        val byPkg = apps.associateBy { it.pkg }
+        val out = ArrayList<AppEntry>(apps.size)
+        val seen = HashSet<String>()
+        for (p in saved) byPkg[p]?.let { if (seen.add(p)) out.add(it) }
+        for (a in apps) if (a.pkg !in seen) out.add(a)
+        return out
+    }
+
     fun load(ctx: Context): List<AppEntry> {
         val pm = ctx.packageManager
         val map = LinkedHashMap<String, ResolveInfo>()
