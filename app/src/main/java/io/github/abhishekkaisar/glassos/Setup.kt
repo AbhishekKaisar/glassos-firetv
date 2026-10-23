@@ -34,7 +34,7 @@ private const val REQ_HOME = 8
  * also open from Settings ([open] with single = true).
  */
 class SetupView(private val home: HomeScreen) : FrameLayout(home.ctx) {
-    enum class Step { WELCOME, NAME, PHOTO, COUNTRY, APPS, PERMISSIONS, HOME, DONE, TMDB_KEY, ABOUT }
+    enum class Step { WELCOME, NAME, PHOTO, COUNTRY, APPS, PERMISSIONS, HOME, DONE, TMDB_KEY, ABOUT, HIDDEN }
 
     /** Fire TV cannot change its home app, so the home step is for Android TV and Google TV only. */
     private val fireTv = Platform.isFireTv(context)
@@ -71,6 +71,7 @@ class SetupView(private val home: HomeScreen) : FrameLayout(home.ctx) {
     private var photoCleared = false
     private var country = ""
     private val picked = ArrayList<String>()
+    private val hidden = HashSet<String>()
     private var keyText = ""
 
     init {
@@ -101,6 +102,8 @@ class SetupView(private val home: HomeScreen) : FrameLayout(home.ctx) {
         picked.clear()
         picked.addAll(prefs.dock ?: AppRepo.defaultDock(HomeShare.apps ?: emptyList()))
         keyText = prefs.tmdbKey
+        hidden.clear()
+        hidden.addAll(prefs.hidden)
         isOpen = true
         visibility = View.VISIBLE
         alpha = 0f
@@ -152,6 +155,7 @@ class SetupView(private val home: HomeScreen) : FrameLayout(home.ctx) {
             Step.COUNTRY -> if (country != prefs.country) { prefs.country = country; if (single) home.refetchTopShelf() }
             Step.APPS -> if (picked.isNotEmpty()) { prefs.dock = picked.toList(); home.reloadProfile(); if (single) home.refetchTopShelf() }
             Step.TMDB_KEY -> { prefs.tmdbKey = keyText; home.refetchTopShelf() }
+            Step.HIDDEN -> if (hidden != prefs.hidden) { prefs.hidden = hidden.toSet(); home.reloadDock() }
             else -> {}
         }
     }
@@ -160,7 +164,7 @@ class SetupView(private val home: HomeScreen) : FrameLayout(home.ctx) {
         step = s
         // Steps with a scrolling list clip to the body, or the list draws over the buttons; the others leave room
         // for focus scaling.
-        body.clipChildren = s == Step.COUNTRY || s == Step.APPS
+        body.clipChildren = s == Step.COUNTRY || s == Step.APPS || s == Step.HIDDEN
         body.removeAllViews()
         nav.removeAllViews()
         val i = flow.indexOf(s)
@@ -178,6 +182,7 @@ class SetupView(private val home: HomeScreen) : FrameLayout(home.ctx) {
             Step.DONE -> doneStep()
             Step.TMDB_KEY -> keyStep()
             Step.ABOUT -> aboutStep()
+            Step.HIDDEN -> hiddenStep()
         }
         invalidateDeep(panel)
     }
@@ -373,9 +378,50 @@ class SetupView(private val home: HomeScreen) : FrameLayout(home.ctx) {
     private fun appsStep() {
         title.text = "Your top row"
         subtitle.text = "Choose up to ${HomeScreen.COLS} apps for the shelf. You can change them later."
-        val apps = HomeShare.apps ?: AppRepo.load(context).also { HomeShare.apps = it }
+        val apps = allApps().filter { it.pkg !in hidden }
         if (picked.isEmpty()) picked.addAll(AppRepo.defaultDock(apps))
         picked.retainAll(apps.map { it.pkg }.toSet())
+        fun refreshCount() { subtitle.text = "Choose up to ${HomeScreen.COLS} apps for the shelf (${picked.size} chosen). You can change them later." }
+        refreshCount()
+        val tiles = appGrid(apps, { it in picked }) { a, t ->
+            if (a.pkg in picked) { picked.remove(a.pkg); t.chosen = false }
+            else if (picked.size >= HomeScreen.COLS) Toast.makeText(context, "The top row holds ${HomeScreen.COLS} apps. Remove one first.", Toast.LENGTH_SHORT).show()
+            else { picked.add(a.pkg); t.chosen = true }
+            refreshCount()
+        }
+        if (!single) navButton("Back") { back() }
+        navButton(continueLabel(), primary = true) { next() }
+        tiles.firstOrNull()?.requestFocus()
+    }
+
+    /** Settings > Hidden apps: ticked apps stay off the drawer, the top row and the top row picker. */
+    private fun hiddenStep() {
+        title.text = "Hidden apps"
+        val apps = allApps()
+        fun refreshCount() {
+            subtitle.text = if (hidden.isEmpty()) "Choose apps to hide from Home. They still open from the Top Shelf."
+                else "${hidden.size} hidden. Choose an app again to show it on Home."
+        }
+        refreshCount()
+        // Hidden apps first, so the ones to bring back are at hand.
+        val sorted = apps.filter { it.pkg in hidden } + apps.filter { it.pkg !in hidden }
+        val tiles = appGrid(sorted, { it in hidden }) { a, t ->
+            if (a.pkg !in hidden && apps.count { it.pkg !in hidden } <= 1) {
+                Toast.makeText(context, "Keep at least one app on Home", Toast.LENGTH_SHORT).show()
+                return@appGrid
+            }
+            if (!hidden.remove(a.pkg)) hidden.add(a.pkg)
+            t.chosen = a.pkg in hidden
+            refreshCount()
+        }
+        navButton("Done", primary = true) { next() }
+        tiles.firstOrNull()?.requestFocus()
+    }
+
+    private fun allApps(): List<AppEntry> = HomeShare.apps ?: AppRepo.load(context).also { HomeShare.apps = it }
+
+    /** A scrolling grid of app thumbnails, five a row; [chosen] marks a tile, [click] runs on OK. */
+    private fun appGrid(apps: List<AppEntry>, chosen: (String) -> Boolean, click: (AppEntry, ThumbView) -> Unit): List<ThumbView> {
         val scroll = ScrollView(context).apply { isVerticalScrollBarEnabled = false; overScrollMode = View.OVER_SCROLL_NEVER; clipChildren = true; clipToPadding = false }
         val grid = LinearLayout(context).apply { orientation = LinearLayout.VERTICAL; clipChildren = false; clipToPadding = false }
         grid.setPadding(dpi(14f), dpi(14f), dpi(14f), dpi(14f))
@@ -386,8 +432,6 @@ class SetupView(private val home: HomeScreen) : FrameLayout(home.ctx) {
         val tw = (panelW - dpi(68f) - dpi(28f) - (cols - 1) * dpi(18f)) / cols
         val th = tw * 9 / 16
         val tiles = ArrayList<ThumbView>()
-        fun refreshCount() { subtitle.text = "Choose up to ${HomeScreen.COLS} apps for the shelf (${picked.size} chosen). You can change them later." }
-        refreshCount()
         var row: LinearLayout? = null
         apps.forEachIndexed { i, a ->
             if (i % cols == 0) {
@@ -397,20 +441,13 @@ class SetupView(private val home: HomeScreen) : FrameLayout(home.ctx) {
             val t = ThumbView(context, tw, th, a.pkg, a.label).apply {
                 id = View.generateViewId()
                 bitmap = tileArt(a, tw, th)
-                chosen = a.pkg in picked
+                this.chosen = chosen(a.pkg)
             }
-            t.onClick = {
-                if (a.pkg in picked) { picked.remove(a.pkg); t.chosen = false }
-                else if (picked.size >= HomeScreen.COLS) Toast.makeText(context, "The top row holds ${HomeScreen.COLS} apps. Remove one first.", Toast.LENGTH_SHORT).show()
-                else { picked.add(a.pkg); t.chosen = true }
-                refreshCount()
-            }
+            t.onClick = { click(a, t) }
             row!!.addView(t, LinearLayout.LayoutParams(-2, -2).apply { if (i % cols > 0) leftMargin = dpi(18f) })
             tiles.add(t)
         }
-        if (!single) navButton("Back") { back() }
-        navButton(continueLabel(), primary = true) { next() }
-        tiles.firstOrNull()?.requestFocus()
+        return tiles
     }
 
     /** The app's banner, or its icon centred on its own colour, at thumbnail size. */

@@ -70,10 +70,20 @@ class HomeScreen(val ctx: Context, private val host: HomeHost, seed: HomeScreen?
         private set
     lateinit var setup: SetupView
         private set
+    lateinit var appMenu: AppMenu
+        private set
+    private lateinit var movePill: GlassBox
 
     private var apps: List<AppEntry> = emptyList()
     private val dockTiles = ArrayList<TileView>()
     private val dockPkgs = ArrayList<String>()
+    /** The drawer's apps in their order (the saved order, then new installs). Hidden apps are in neither list. */
+    private val drawerPkgs = ArrayList<String>()
+    /** The app being moved after a hold of OK, and the two lists as they were, for Back. */
+    private var movingPkg: String? = null
+    private var moveFrom: Pair<List<String>, List<String>>? = null
+    /** The OK press that dropped a move: its release must not reach the tile, or the app would open. */
+    private var eatOkUp = false
     private val rows = ArrayList<ArrayList<TileView>>()
     private var currentRow = 0
     private var lastDockIndex = 0
@@ -104,6 +114,8 @@ class HomeScreen(val ctx: Context, private val host: HomeHost, seed: HomeScreen?
             if (settings.isOpen) invalidateDeep(settings.panel)
             if (cc.isOpen) invalidateDeep(cc.panel)
             if (setup.isOpen) invalidateDeep(setup.panel)
+            if (appMenu.isOpen) invalidateDeep(appMenu.panel)
+            if (movePill.visibility == View.VISIBLE) movePill.invalidate()
         }
     }
 
@@ -227,12 +239,36 @@ class HomeScreen(val ctx: Context, private val host: HomeHost, seed: HomeScreen?
         }
         home.addView(hint, FrameLayout.LayoutParams(-1, -2, Gravity.TOP).apply { topMargin = row0Top - ctx.dpi(56f) })
 
+        // Move mode hint: a small glass pill at the top centre, clear of the shelf and the drawer rows.
+        val pillH = ctx.dpi(30f)
+        movePill = GlassBox(ctx, pillH / 2f).apply {
+            glass.tint = 0.10f
+            glass.dark = 0.34f
+            glass.sheen = 0.06f
+            shadowAlpha = 0.25f
+            visibility = View.GONE
+            setPadding(ctx.dpi(18f), 0, ctx.dpi(18f), 0)
+        }
+        movePill.addView(TextView(ctx).apply {
+            text = "Arrows to move · OK to drop · Menu for options · Back to cancel"
+            textSize = 14f
+            typeface = Fonts.regular
+            setTextColor(0xF2FFFFFF.toInt())
+            gravity = Gravity.CENTER
+            maxLines = 1
+        }, FrameLayout.LayoutParams(-2, -1, Gravity.CENTER))
+        root.addView(movePill, FrameLayout.LayoutParams(-2, pillH, Gravity.TOP or Gravity.CENTER_HORIZONTAL).apply {
+            topMargin = sh * 48 / 1080
+        })
+
         settings = SettingsView(this)
         root.addView(settings, FrameLayout.LayoutParams(-1, -1))
         cc = ControlCenter(this)
         root.addView(cc, FrameLayout.LayoutParams(-1, -1))
         setup = SetupView(this)
         root.addView(setup, FrameLayout.LayoutParams(-1, -1))
+        appMenu = AppMenu(this)
+        root.addView(appMenu, FrameLayout.LayoutParams(-1, -1))
 
         root.viewTreeObserver.addOnGlobalFocusChangeListener { old, new ->
             if (old != null && new != null && old !== new && prefs.sound && !FocusAnim.forceInstant) sound?.tick()
@@ -272,6 +308,9 @@ class HomeScreen(val ctx: Context, private val host: HomeHost, seed: HomeScreen?
                 .withEndAction { if (currentRow != 0 && scrim.alpha >= 1f) hero.visibility = View.INVISIBLE }
                 .start()
         }
+        // The move hint rises above the row over the moving one while the drawer is scrolled.
+        val pillY = if (r == 0) 0f else -(sh * 40 / 1080).toFloat()
+        if (instant) movePill.translationY = pillY else movePill.animate().translationY(pillY).setDuration(380).start()
         fadeLabels(r > 0, instant)
         updateHeroRunning()
     }
@@ -300,7 +339,8 @@ class HomeScreen(val ctx: Context, private val host: HomeHost, seed: HomeScreen?
     /** The hero rotates only while the home row is on screen, nothing covers it and it is not focused. */
     fun updateHeroRunning() {
         if (!::hero.isInitialized || released) return
-        hero.setRunning(resumed && currentRow == 0 && !settings.isOpen && !cc.isOpen && !setup.isOpen && !hero.isFocused && !editMode)
+        hero.setRunning(resumed && currentRow == 0 && !settings.isOpen && !cc.isOpen && !setup.isOpen && !hero.isFocused && !editMode &&
+            movingPkg == null && !appMenu.isOpen)
     }
 
     /**
@@ -425,6 +465,12 @@ class HomeScreen(val ctx: Context, private val host: HomeHost, seed: HomeScreen?
         }.apply { priority = Thread.MIN_PRIORITY }.start()
     }
 
+    /** The window went to the back (an app, the screensaver, Settings): a move in progress is put back. */
+    fun onPaused() {
+        resumed = false
+        if (::appMenu.isInitialized) leaveMove()
+    }
+
     fun onResumed() {
         resumed = true
         if (::setup.isInitialized) setup.onReturned()
@@ -504,23 +550,53 @@ class HomeScreen(val ctx: Context, private val host: HomeHost, seed: HomeScreen?
     }
 
     private fun applyApps(list: List<AppEntry>) {
+        // The app list changed under a move (an install or uninstall): the move ends unsaved.
+        if (movingPkg != null) endMove()
+        if (appMenu.isOpen) appMenu.close()
         apps = list
-        val installed = list.map { it.pkg }.toSet()
-        val wanted = prefs.dock ?: AppRepo.defaultDock(list)
+        val visible = visibleApps()
+        val shown = visible.map { it.pkg }.toSet()
+        val wanted = prefs.dock ?: AppRepo.defaultDock(visible)
         dockPkgs.clear()
-        dockPkgs.addAll(wanted.filter { it in installed }.distinct().take(COLS))
+        dockPkgs.addAll(wanted.filter { it in shown }.distinct().take(COLS))
+        if (dockPkgs.isEmpty()) dockPkgs.addAll(AppRepo.defaultDock(visible))
+        drawerPkgs.clear()
+        drawerPkgs.addAll(AppRepo.arrange(visible.filter { it.pkg !in dockPkgs }, prefs.order).map { it.pkg })
         rebuildGrid()
     }
 
+    /** Installed apps the user has not hidden, alphabetically. */
+    private fun visibleApps(): List<AppEntry> {
+        val hidden = prefs.hidden
+        return if (hidden.isEmpty()) apps else apps.filter { it.pkg !in hidden }
+    }
+
     private fun saveDock() { prefs.dock = dockPkgs.toList() }
+    private fun saveOrder() { prefs.order = drawerPkgs.toList() }
+
+    /**
+     * An app leaving the top row goes to the front of the drawer once the user has arranged it, or back to its
+     * alphabetical place while the drawer is still alphabetical.
+     */
+    private fun returnToDrawer(pkg: String) {
+        if (prefs.order == null) {
+            drawerPkgs.clear()
+            drawerPkgs.addAll(visibleApps().map { it.pkg }.filter { it !in dockPkgs })
+        } else {
+            drawerPkgs.remove(pkg)
+            drawerPkgs.add(0, pkg)
+            saveOrder()
+        }
+    }
 
     private fun makeTile(app: AppEntry, row: Int): TileView {
         val t = TileView(ctx, tileW, tileH, if (row == 0) 0 else labelH)
         t.app = app
         t.id = View.generateViewId()
         t.tag = row
-        t.onClick = { if (!editMode) launch(app.pkg, t) }
-        t.onLongPress = { if (!editMode) toggleDock(app.pkg) }
+        // Read the tile's app at click time: a move swaps apps between tiles in place.
+        t.onClick = { val a = t.app; if (!editMode && a != null) launch(a.pkg, t) }
+        t.onLongPress = { if (!editMode) startMove(t) }
         return t
     }
 
@@ -552,7 +628,7 @@ class HomeScreen(val ctx: Context, private val host: HomeHost, seed: HomeScreen?
         dockTiles.addAll(dockRow)
         rows.add(dockRow)
         addRow(dockRow, 0)
-        val rest = apps.filter { it.pkg !in dockPkgs }
+        val rest = drawerPkgs.mapNotNull { byPkg[it] }
         rest.chunked(COLS).forEachIndexed { i, chunk ->
             val r = i + 1
             val list = ArrayList(chunk.map { makeTile(it, r).apply { labelAlpha = if (labelsShown) 1f else 0f } })
@@ -563,7 +639,7 @@ class HomeScreen(val ctx: Context, private val host: HomeHost, seed: HomeScreen?
             height = rowTop(rows.size) + rowH + ctx.dpi(120f)
         }
         if (editMode) dockTiles.forEach { it.setJiggle(true) }
-        if (settings.isOpen) return
+        if (settings.isOpen || appMenu.isOpen) return
         val target = rows.flatten().firstOrNull { it.app?.pkg == keep }
         val cur = focused()
         when {
@@ -597,8 +673,12 @@ class HomeScreen(val ctx: Context, private val host: HomeHost, seed: HomeScreen?
 
     fun toggleDock(pkg: String) {
         if (pkg in dockPkgs) {
-            if (dockPkgs.size <= 1) return
+            if (dockPkgs.size <= 1) {
+                Toast.makeText(ctx, "The top row needs at least one app", Toast.LENGTH_SHORT).show()
+                return
+            }
             dockPkgs.remove(pkg)
+            returnToDrawer(pkg)
             Toast.makeText(ctx, "Removed from the top row", Toast.LENGTH_SHORT).show()
         } else {
             if (dockPkgs.size >= COLS) {
@@ -606,12 +686,186 @@ class HomeScreen(val ctx: Context, private val host: HomeHost, seed: HomeScreen?
                 return
             }
             dockPkgs.add(pkg)
+            if (drawerPkgs.remove(pkg) && prefs.order != null) saveOrder()
             Toast.makeText(ctx, "Added to the top row", Toast.LENGTH_SHORT).show()
         }
         saveDock()
         rebuildGrid(pkg)
-        // The other home screen (activity or overlay) follows the saved dock on its next load.
-        HomeShare.main?.takeIf { it !== this }?.reloadDock()
+        syncOther()
+    }
+
+    /** The other home screen (activity or overlay) follows the saved dock, order and hidden apps. */
+    private fun syncOther() { HomeShare.main?.takeIf { it !== this }?.reloadDock() }
+
+    /** Leaves [pkg] out of the drawer and the top row (Settings > Hidden apps shows it again). */
+    fun hideApp(pkg: String) {
+        if (pkg in dockPkgs && dockPkgs.size <= 1) {
+            Toast.makeText(ctx, "The top row needs at least one app", Toast.LENGTH_SHORT).show()
+            return
+        }
+        val flat = dockPkgs + drawerPkgs
+        val i = flat.indexOf(pkg)
+        val next = flat.getOrNull(i + 1)?.takeIf { (it in dockPkgs) == (pkg in dockPkgs) } ?: flat.getOrNull(i - 1)
+        prefs.hidden = prefs.hidden + pkg
+        if (dockPkgs.remove(pkg)) saveDock()
+        drawerPkgs.remove(pkg)
+        rebuildGrid(next)
+        Toast.makeText(ctx, "Hidden. Settings > Hidden apps shows it again.", Toast.LENGTH_LONG).show()
+        syncOther()
+    }
+
+    // ---------- Move mode (hold OK on an app) ----------
+
+    private fun tileOf(pkg: String?): TileView? {
+        if (pkg == null) return null
+        for (r in rows) for (t in r) if (t.app?.pkg == pkg) return t
+        return null
+    }
+
+    /** Hold OK on a tile: it lifts and wiggles; arrows move it across the shelf and the drawer. */
+    private fun startMove(t: TileView) {
+        val pkg = t.app?.pkg ?: return
+        if (editMode || movingPkg != null || settings.isOpen || cc.isOpen) return
+        movingPkg = pkg
+        moveFrom = Pair(dockPkgs.toList(), drawerPkgs.toList())
+        t.picked = true
+        t.setJiggle(true, gentle = true)
+        movePill.alpha = 0f
+        movePill.visibility = View.VISIBLE
+        movePill.animate().alpha(1f).setDuration(200).start()
+        sound?.takeIf { prefs.sound }?.tick()
+        updateHeroRunning()
+    }
+
+    /** Settles the moving tile and leaves move mode, without saving. */
+    private fun endMove() {
+        tileOf(movingPkg)?.let { it.setJiggle(false); it.picked = false }
+        movingPkg = null
+        moveFrom = null
+        movePill.animate().cancel()
+        movePill.translationY = if (currentRow == 0) 0f else -(sh * 40 / 1080).toFloat()
+        movePill.visibility = View.GONE
+        updateHeroRunning()
+    }
+
+    /** OK while moving: the app stays where it is and the order is saved. */
+    private fun dropMove() {
+        if (movingPkg == null) return
+        val changed = moveFrom?.let { it.first != dockPkgs || it.second != drawerPkgs } ?: false
+        endMove()
+        if (!changed) return
+        saveDock()
+        saveOrder()
+        syncOther()
+    }
+
+    /** Back while moving: everything goes back where it was. */
+    private fun cancelMove() {
+        val from = moveFrom ?: return
+        val pkg = movingPkg
+        endMove()
+        setLists(from.first, from.second)
+        tileOf(pkg)?.requestFocus()
+    }
+
+    /**
+     * Puts new lists on screen. When the shelf and the drawer keep their sizes (a move within either, or a swap
+     * across them) the tiles stay and only their apps change: no views are made or removed.
+     */
+    private fun setLists(dock: List<String>, drawer: List<String>) {
+        val same = dock.size == dockPkgs.size && drawer.size == drawerPkgs.size && rows.size == 1 + (drawer.size + COLS - 1) / COLS
+        dockPkgs.clear(); dockPkgs.addAll(dock)
+        drawerPkgs.clear(); drawerPkgs.addAll(drawer)
+        if (!same) { rebuildGrid(movingPkg); return }
+        val byPkg = apps.associateBy { it.pkg }
+        dockTiles.forEachIndexed { i, t -> val a = byPkg[dockPkgs[i]]; if (t.app !== a) t.app = a }
+        var k = 0
+        for (r in 1 until rows.size) for (t in rows[r]) { val a = byPkg[drawerPkgs[k++]]; if (t.app !== a) t.app = a }
+    }
+
+    /**
+     * Arrows while moving. Left and Right step through the shelf, or through the drawer in reading order; Down
+     * and Up move a row. Up from the drawer's first row puts the app on the shelf (a full shelf passes its last app
+     * down to the front of the drawer); Down from the shelf puts it in the drawer's first row.
+     */
+    private fun moveBy(code: Int) {
+        val pkg = movingPkg ?: return
+        val d = ArrayList(dockPkgs)
+        val w = ArrayList(drawerPkgs)
+        val inDock = pkg in d
+        val i = if (inDock) d.indexOf(pkg) else w.indexOf(pkg)
+        fun shift(list: ArrayList<String>, to: Int): Boolean {
+            if (to < 0 || to >= list.size) return false
+            list.removeAt(i); list.add(to, pkg); return true
+        }
+        val moved = when (code) {
+            KeyEvent.KEYCODE_DPAD_LEFT -> shift(if (inDock) d else w, i - 1)
+            KeyEvent.KEYCODE_DPAD_RIGHT -> shift(if (inDock) d else w, i + 1)
+            KeyEvent.KEYCODE_DPAD_DOWN -> when {
+                inDock && d.size > 1 -> { d.removeAt(i); w.add(minOf(i, w.size), pkg); true }
+                inDock -> { Toast.makeText(ctx, "The top row needs at least one app", Toast.LENGTH_SHORT).show(); false }
+                i / COLS < (w.size - 1) / COLS -> shift(w, minOf(i + COLS, w.size - 1))
+                else -> false
+            }
+            KeyEvent.KEYCODE_DPAD_UP -> when {
+                inDock -> false
+                i >= COLS -> shift(w, i - COLS)
+                else -> {
+                    w.removeAt(i)
+                    d.add(minOf(i, d.size), pkg)
+                    if (d.size > COLS) w.add(0, d.removeAt(d.size - 1))
+                    true
+                }
+            }
+            else -> false
+        }
+        val old = tileOf(pkg)
+        if (!moved) {
+            when (code) {
+                KeyEvent.KEYCODE_DPAD_LEFT -> old?.nudge(-1, 0)
+                KeyEvent.KEYCODE_DPAD_RIGHT -> old?.nudge(1, 0)
+                KeyEvent.KEYCODE_DPAD_UP -> old?.nudge(0, -1)
+                KeyEvent.KEYCODE_DPAD_DOWN -> old?.nudge(0, 1)
+            }
+            return
+        }
+        setLists(d, w)
+        val t = tileOf(pkg) ?: return
+        if (t !== old) {
+            t.picked = true
+            t.setJiggle(true, gentle = true)
+            old?.setJiggle(false)
+            old?.picked = false
+        }
+        t.requestFocus()
+        if ((t.tag as? Int) == 0) lastDockIndex = dockTiles.indexOf(t).coerceAtLeast(0)
+    }
+
+    /** Menu while moving: add to or remove from the top row, or hide. Each action first drops the app where it is. */
+    private fun openAppMenu() {
+        val pkg = movingPkg ?: return
+        val app = apps.firstOrNull { it.pkg == pkg } ?: return
+        val onShelf = pkg in dockPkgs
+        blockHome(true)
+        movePill.visibility = View.INVISIBLE
+        appMenu.open(app.label, listOf(
+            (if (onShelf) "Remove from top row" else "Add to top row") to { dropMove(); toggleDock(pkg) },
+            "Hide app" to { dropMove(); hideApp(pkg) }
+        )) {
+            blockHome(false)
+            if (movingPkg != null) {
+                movePill.visibility = View.VISIBLE
+                tileOf(movingPkg)?.requestFocus()
+            }
+            updateHeroRunning()
+        }
+        updateHeroRunning()
+    }
+
+    /** Ends move mode and the app menu (another panel is opening, or the home is being reset). */
+    private fun leaveMove() {
+        if (appMenu.isOpen) appMenu.close()
+        if (movingPkg != null) cancelMove()
     }
 
     /** Re-reads the saved dock (changed on the other home screen). */
@@ -636,6 +890,7 @@ class HomeScreen(val ctx: Context, private val host: HomeHost, seed: HomeScreen?
 
     fun openSettings() {
         if (cc.isOpen) cc.close(instant = true)
+        leaveMove()
         if (editMode) exitEdit()
         val a = ctx as? Activity
         if (a != null && Build.VERSION.SDK_INT >= 23 && !prefs.askedStorage && !storageGranted()) {
@@ -653,6 +908,7 @@ class HomeScreen(val ctx: Context, private val host: HomeHost, seed: HomeScreen?
         val fromSettings = settings.isOpen
         if (cc.isOpen) cc.close(instant = true)
         if (settings.isOpen) settings.close(instant = true)
+        leaveMove()
         if (editMode) exitEdit()
         blockHome(true)
         setup.open(step, single) { if (fromSettings) openSettings() }
@@ -667,6 +923,7 @@ class HomeScreen(val ctx: Context, private val host: HomeHost, seed: HomeScreen?
 
     fun openControlCenter() {
         if (cc.isOpen || settings.isOpen || setup.isOpen) return
+        leaveMove()
         if (editMode) exitEdit()
         val from = focused()
         blockHome(true)
@@ -690,6 +947,7 @@ class HomeScreen(val ctx: Context, private val host: HomeHost, seed: HomeScreen?
 
     fun enterEdit() {
         if (dockTiles.isEmpty()) return
+        leaveMove()
         editMode = true
         pickedIndex = -1
         hint.visibility = View.VISIBLE
@@ -731,6 +989,8 @@ class HomeScreen(val ctx: Context, private val host: HomeHost, seed: HomeScreen?
         val row = t.parent as LinearLayout
         row.removeAllViews()
         dockTiles.forEachIndexed { i, v -> row.addView(v, LinearLayout.LayoutParams(-2, -2).apply { if (i > 0) leftMargin = gap }) }
+        // Leaving the window stopped each tile's jiggle: start them again.
+        dockTiles.forEach { it.setJiggle(true) }
         rows[0] = ArrayList(dockTiles)
         pickedIndex = to
         lastDockIndex = to
@@ -742,7 +1002,8 @@ class HomeScreen(val ctx: Context, private val host: HomeHost, seed: HomeScreen?
         val idx = dockTiles.indexOfFirst { it.isFocused }
         if (idx < 0 || dockPkgs.size <= 1) return
         if (pickedIndex >= 0) { dockTiles.getOrNull(pickedIndex)?.picked = false; pickedIndex = -1 }
-        dockPkgs.removeAt(idx)
+        val pkg = dockPkgs.removeAt(idx)
+        returnToDrawer(pkg)
         saveDock()
         rebuildGrid(dockPkgs[idx.coerceAtMost(dockPkgs.size - 1)])
     }
@@ -758,6 +1019,7 @@ class HomeScreen(val ctx: Context, private val host: HomeHost, seed: HomeScreen?
     fun restore(s: HomeState, from: HomeScreen?) {
         if (from != null && from.hero.slides.isNotEmpty()) hero.adopt(from.hero)
         if (setup.isOpen) return
+        leaveMove()
         if (editMode) exitEdit()
         lastDockIndex = s.lastDockIndex
         FocusAnim.forceInstant = true
@@ -798,8 +1060,27 @@ class HomeScreen(val ctx: Context, private val host: HomeHost, seed: HomeScreen?
             return true
         }
         val ok = code == KeyEvent.KEYCODE_DPAD_CENTER || code == KeyEvent.KEYCODE_ENTER
-        if (settings.isOpen || cc.isOpen) return false
+        if (ok && eatOkUp) {
+            if (!down) { eatOkUp = false; return true }
+            if (e.repeatCount > 0) return true
+            eatOkUp = false
+        }
+        if (settings.isOpen || cc.isOpen || appMenu.isOpen) return false
         val focusTile = focused() as? TileView
+        if (movingPkg != null) {
+            // The hold that started the move keeps repeating until OK is let go: only a new press drops.
+            when (code) {
+                KeyEvent.KEYCODE_DPAD_CENTER, KeyEvent.KEYCODE_ENTER -> {
+                    if (down && e.repeatCount == 0) { dropMove(); eatOkUp = true }
+                    return true
+                }
+                KeyEvent.KEYCODE_MEDIA_PLAY_PAUSE -> { if (down && e.repeatCount == 0) openAppMenu(); return true }
+                KeyEvent.KEYCODE_DPAD_LEFT, KeyEvent.KEYCODE_DPAD_RIGHT, KeyEvent.KEYCODE_DPAD_UP, KeyEvent.KEYCODE_DPAD_DOWN -> {
+                    if (down) moveBy(code); return true
+                }
+            }
+            return false
+        }
         if (editMode) {
             val idx = dockTiles.indexOf(focusTile)
             if (ok && idx >= 0) {
@@ -838,11 +1119,13 @@ class HomeScreen(val ctx: Context, private val host: HomeHost, seed: HomeScreen?
         return false
     }
 
-    /** Menu opens Control Center anywhere on the home (adding or removing a top-row app is a long press of OK). */
+    /** Menu opens Control Center anywhere on the home; while an app is moving it opens the app's options. */
     private fun onMenu() {
         when {
             cc.isOpen -> cc.close()
             settings.isOpen -> settings.close()
+            appMenu.isOpen -> appMenu.close()
+            movingPkg != null -> openAppMenu()
             editMode -> removeFocusedFromDock()
             else -> openControlCenter()
         }
@@ -853,6 +1136,8 @@ class HomeScreen(val ctx: Context, private val host: HomeHost, seed: HomeScreen?
             setup.isOpen -> setup.back()
             cc.isOpen -> cc.back()
             settings.isOpen -> settings.close()
+            appMenu.isOpen -> appMenu.close()
+            movingPkg != null -> cancelMove()
             editMode -> exitEdit()
             currentRow > 0 -> focusDock()
             else -> { /* Home stays put. */ }
@@ -862,12 +1147,13 @@ class HomeScreen(val ctx: Context, private val host: HomeHost, seed: HomeScreen?
     /** Home pressed again while this home is shown: like tvOS, close what is open and keep focus. */
     fun onHomeAgain(fromWatcher: Boolean) {
         if (setup.isOpen) return
-        if (fromWatcher && !settings.isOpen && !cc.isOpen && !editMode) {
+        if (fromWatcher && !settings.isOpen && !cc.isOpen && !editMode && movingPkg == null && !appMenu.isOpen) {
             if (focused() == null) focusDock()
             return
         }
         if (cc.isOpen) cc.close(instant = true)
         if (settings.isOpen) settings.close()
+        leaveMove()
         if (editMode) exitEdit()
         lastDockIndex = 0
         blockHome(false)

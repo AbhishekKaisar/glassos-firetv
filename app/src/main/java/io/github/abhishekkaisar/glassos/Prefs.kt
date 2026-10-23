@@ -42,6 +42,16 @@ class Prefs(ctx: Context) {
         get() = sp.getString("dock", null)?.split(',')?.filter { it.isNotBlank() }
         set(v) { sp.edit().putString("dock", v?.joinToString(",")).apply() }
 
+    /** The drawer's order once the user has moved an app (null: alphabetical). Apps not in it go at the end. */
+    var order: List<String>?
+        get() = sp.getString("order", null)?.split(',')?.filter { it.isNotBlank() }
+        set(v) { sp.edit().putString("order", v?.joinToString(",")).apply() }
+
+    /** Apps left out of the drawer, the top row and the top row picker (Settings > Hidden apps). */
+    var hidden: Set<String>
+        get() = sp.getString("hidden", null)?.split(',')?.filter { it.isNotBlank() }?.toSet() ?: emptySet()
+        set(v) { sp.edit().putString("hidden", v.joinToString(",")).apply() }
+
     var name: String
         get() = sp.getString("name", "") ?: ""
         set(v) { sp.edit().putString("name", v).apply() }

@@ -197,16 +197,22 @@ class TileView(ctx: Context, val cardW: Int, val cardH: Int, private val labelH:
         }
     }
 
-    fun setJiggle(on: Boolean) {
+    /**
+     * Edit top row jiggles every shelf tile; [gentle] is the slower wiggle of the one tile being moved. Only the
+     * view's rotation changes, so the tile is not redrawn per frame.
+     */
+    fun setJiggle(on: Boolean, gentle: Boolean = false) {
         jiggle?.cancel()
         jiggle = null
         if (!on) { rotation = 0f; return }
+        val half = if (gentle) 260L else 150L
         val phase = (Math.random() * 1000).toLong()
-        jiggle = ValueAnimator.ofFloat(-1.3f, 1.3f).apply {
-            duration = 150
+        val deg = if (gentle) 1.1f else 1.3f
+        jiggle = ValueAnimator.ofFloat(-deg, deg).apply {
+            duration = half
             repeatMode = ValueAnimator.REVERSE
             repeatCount = ValueAnimator.INFINITE
-            currentPlayTime = phase % 150
+            currentPlayTime = phase % half
             addUpdateListener { rotation = it.animatedValue as Float }
             start()
         }
@@ -218,24 +224,20 @@ class TileView(ctx: Context, val cardW: Int, val cardH: Int, private val labelH:
         glareAnim?.cancel()
     }
 
+    /**
+     * A hold of OK fires [onLongPress] once the key's own repeats show it held for [HOLD_MS] (a little longer than
+     * the system long press, like tvOS); no timer, so a quick click is never mistaken for a hold.
+     */
     override fun onKeyDown(keyCode: Int, event: KeyEvent): Boolean {
         if (keyCode == KeyEvent.KEYCODE_DPAD_CENTER || keyCode == KeyEvent.KEYCODE_ENTER) {
-            if (event.repeatCount == 0) {
-                longFired = false
-                event.startTracking()
+            if (event.repeatCount == 0) longFired = false
+            else if (!longFired && onLongPress != null && event.eventTime - event.downTime >= HOLD_MS) {
+                longFired = true
+                onLongPress?.invoke()
             }
             return true
         }
         return super.onKeyDown(keyCode, event)
-    }
-
-    override fun onKeyLongPress(keyCode: Int, event: KeyEvent): Boolean {
-        if ((keyCode == KeyEvent.KEYCODE_DPAD_CENTER || keyCode == KeyEvent.KEYCODE_ENTER) && onLongPress != null) {
-            longFired = true
-            onLongPress?.invoke()
-            return true
-        }
-        return super.onKeyLongPress(keyCode, event)
     }
 
     override fun onKeyUp(keyCode: Int, event: KeyEvent): Boolean {
@@ -245,6 +247,10 @@ class TileView(ctx: Context, val cardW: Int, val cardH: Int, private val labelH:
             return true
         }
         return super.onKeyUp(keyCode, event)
+    }
+
+    companion object {
+        const val HOLD_MS = 700L
     }
 
     override fun onDraw(c: Canvas) {

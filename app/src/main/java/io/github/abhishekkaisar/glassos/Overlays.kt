@@ -35,6 +35,7 @@ class SettingsView(private val act: HomeScreen) : FrameLayout(act.ctx) {
     private val shelfRow = RowView(context, "Top Shelf")
     private val keyRow = RowView(context, "TMDB API key")
     private val appsRow = RowView(context, "Top row apps")
+    private val hiddenRow = RowView(context, "Hidden apps")
     private val permsRow = RowView(context, "Permissions")
     private val setupRow = RowView(context, "Run setup again")
     private val aboutRow = RowView(context, "About")
@@ -113,6 +114,7 @@ class SettingsView(private val act: HomeScreen) : FrameLayout(act.ctx) {
         })
         list.addView(editRow, rowLp())
         list.addView(appsRow, rowLp())
+        list.addView(hiddenRow, rowLp())
         list.addView(allRow, rowLp())
         list.addView(replaceRow, rowLp())
         list.addView(permsRow, rowLp())
@@ -129,6 +131,7 @@ class SettingsView(private val act: HomeScreen) : FrameLayout(act.ctx) {
         countryRow.onClick = { step(countryRow, SetupView.Step.COUNTRY) }
         keyRow.onClick = { step(keyRow, SetupView.Step.TMDB_KEY) }
         appsRow.onClick = { step(appsRow, SetupView.Step.APPS) }
+        hiddenRow.onClick = { step(hiddenRow, SetupView.Step.HIDDEN) }
         permsRow.onClick = { step(permsRow, SetupView.Step.PERMISSIONS) }
         homeAppRow.onClick = { step(homeAppRow, SetupView.Step.HOME) }
         setupRow.onClick = { resumeRow = setupRow; act.openSetup() }
@@ -170,6 +173,8 @@ class SettingsView(private val act: HomeScreen) : FrameLayout(act.ctx) {
 
     private fun updateValues() {
         soundRow.valueView.text = if (act.prefs.sound) "On" else "Off"
+        val hiddenCount = act.prefs.hidden.count { p -> HomeShare.apps?.any { it.pkg == p } ?: true }
+        hiddenRow.valueView.text = if (hiddenCount == 0) "None" else "$hiddenCount"
         nameRow.valueView.text = act.prefs.name.ifEmpty { "Not set" }
         countryRow.valueView.text = act.prefs.country.ifEmpty { "Not set" }.let { c -> if (c.length == 2) java.util.Locale("", c).displayCountry else c }
         shelfRow.valueView.text = HeroRepo.sourceLabel(act.prefs.topShelf)
@@ -270,3 +275,72 @@ class SettingsView(private val act: HomeScreen) : FrameLayout(act.ctx) {
     }
 }
 
+
+/**
+ * Options for the app being moved (Menu while it wiggles): a small glass card in the middle of the screen, in the
+ * style of the settings rows. Each action closes the card first.
+ */
+class AppMenu(private val act: HomeScreen) : FrameLayout(act.ctx) {
+    var isOpen = false
+        private set
+    private val scrim = View(context).apply { setBackgroundColor(0x59000000) }
+    val panel = GlassBox(context, dp(30f)).apply {
+        glass.tint = 0.10f
+        glass.dark = 0.30f
+        glass.sheen = 0.10f
+        shadowAlpha = 0.5f
+    }
+    private val list = LinearLayout(context).apply { orientation = LinearLayout.VERTICAL; clipChildren = false; clipToPadding = false }
+    private val title = TextView(context).apply {
+        textSize = 22f
+        typeface = Fonts.medium
+        setTextColor(0xFFFFFFFF.toInt())
+        gravity = Gravity.CENTER
+        maxLines = 1
+        ellipsize = android.text.TextUtils.TruncateAt.END
+    }
+    private var onClosed: (() -> Unit)? = null
+
+    init {
+        visibility = View.GONE
+        clipChildren = false
+        addView(scrim, LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.MATCH_PARENT))
+        addView(panel, LayoutParams(dpi(380f), LayoutParams.WRAP_CONTENT, Gravity.CENTER))
+        val pad = dpi(18f)
+        list.setPadding(pad, dpi(16f), pad, dpi(12f))
+        panel.addView(list, LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.WRAP_CONTENT))
+    }
+
+    /** Shows [items] (label to action) under [heading]; [closed] runs whenever the card closes, before any action. */
+    fun open(heading: String, items: List<Pair<String, () -> Unit>>, closed: () -> Unit) {
+        if (isOpen) return
+        isOpen = true
+        onClosed = closed
+        list.removeAllViews()
+        title.text = heading
+        list.addView(title, LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT).apply { bottomMargin = dpi(10f) })
+        var first: View? = null
+        for ((label, action) in items) {
+            val row = RowView(context, label)
+            row.titleView.gravity = Gravity.CENTER
+            row.onClick = { close(); action() }
+            list.addView(row, LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, dpi(48f)).apply { bottomMargin = dpi(5f) })
+            if (first == null) first = row
+        }
+        visibility = View.VISIBLE
+        alpha = 0f
+        animate().alpha(1f).setDuration(160).withEndAction { invalidateDeep(panel) }.start()
+        first?.requestFocus()
+        invalidateDeep(panel)
+    }
+
+    fun close() {
+        if (!isOpen) return
+        isOpen = false
+        animate().cancel()
+        visibility = View.GONE
+        val c = onClosed
+        onClosed = null
+        c?.invoke()
+    }
+}

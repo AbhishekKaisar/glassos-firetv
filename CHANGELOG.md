@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+- Hold OK on any app to move it, like Apple TV: the tile lifts and wiggles, the arrows move it across the top row
+  and the apps below, OK drops it and Back puts everything back. A full top row passes its last app down to the
+  front of the drawer. Menu while moving adds the app to or removes it from the top row, or hides it.
+- Every app can now be re-ordered, not only the top row. The order is kept; new apps go at the end and uninstalled
+  apps drop out. Until you move an app the drawer stays alphabetical.
+- Hidden apps: hide an app from its menu, or choose apps in Settings > Hidden apps, which also shows them again.
+  Hidden apps stay out of the drawer, the top row and the top row picker, and still open from the Top Shelf.
+- A hold of OK on an app no longer adds it to or removes it from the top row; that is in the move menu now.
+- Edit top row: the other tiles keep jiggling after an app is moved.
 - One-tap permission setup: when the TV's ADB accepts the connection and then closes it (Fire OS since 7.6.6.9 and
   8.1.0.3, and late Fire OS 6, block apps from using the TV's own ADB), setup now says so and points to the manual
   grants from a computer. Other ADB errors show the exception and its message.
