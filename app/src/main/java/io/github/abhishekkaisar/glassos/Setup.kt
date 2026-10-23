@@ -517,7 +517,14 @@ class SetupView(private val home: HomeScreen) : FrameLayout(home.ctx) {
                 "Developer options (no Developer options? press OK on Build in Device Preferences > About 7 times). " +
                 "On Android 11 and later, Wireless debugging alone does not open this port: run the adb commands from a computer instead (see the README)."
         is java.net.SocketTimeoutException -> "No answer from the TV's prompt. Try again and choose Allow."
-        else -> "ADB refused the connection (${e.javaClass.simpleName}). Turn debugging off and on, then try again."
+        is AdbClient.Closed -> if (fireTv)
+            "This Fire TV closed its ADB to GlassOS (${e.stage}). Recent Fire OS updates block apps from using the " +
+                "TV's own ADB. Run the grants from a computer instead (README: Manual grants)."
+        else
+            "The TV closed the ADB connection (${e.stage}). Turn debugging off and on and try again, or run the grants " +
+                "from a computer (README: Manual grants)."
+        else -> "ADB refused the connection (${e.javaClass.simpleName}: ${e.message}). Turn debugging off and on and " +
+            "try again, or run the grants from a computer (README: Manual grants)."
     }
 
     // ---------- Home app (Android TV and Google TV) ----------
