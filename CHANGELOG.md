@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 1.0.2-beta (2026-10-23)
 
 - Hold OK on any app to move it, like Apple TV: the tile lifts and wiggles, the arrows move it across the top row
   and the apps below, OK drops it and Back puts everything back. A full top row passes its last app down to the
