@@ -406,6 +406,10 @@ class SetupView(private val home: HomeScreen) : FrameLayout(home.ctx) {
         // Hidden apps first, so the ones to bring back are at hand.
         val sorted = apps.filter { it.pkg in hidden } + apps.filter { it.pkg !in hidden }
         val tiles = appGrid(sorted, { it in hidden }) { a, t ->
+            if (a.pkg !in hidden && apps.count { it.pkg !in hidden } <= 1) {
+                Toast.makeText(context, "Keep at least one app on Home", Toast.LENGTH_SHORT).show()
+                return@appGrid
+            }
             if (!hidden.remove(a.pkg)) hidden.add(a.pkg)
             t.chosen = a.pkg in hidden
             refreshCount()

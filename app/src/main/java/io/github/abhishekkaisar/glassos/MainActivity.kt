@@ -81,7 +81,7 @@ class MainActivity : Activity(), HomeHost {
     override fun onPause() {
         super.onPause()
         HomeShare.mainResumed = false
-        home.resumed = false
+        home.onPaused()
     }
 
     /**

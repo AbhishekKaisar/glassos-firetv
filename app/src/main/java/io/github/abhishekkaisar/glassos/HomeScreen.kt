@@ -82,6 +82,8 @@ class HomeScreen(val ctx: Context, private val host: HomeHost, seed: HomeScreen?
     /** The app being moved after a hold of OK, and the two lists as they were, for Back. */
     private var movingPkg: String? = null
     private var moveFrom: Pair<List<String>, List<String>>? = null
+    /** The OK press that dropped a move: its release must not reach the tile, or the app would open. */
+    private var eatOkUp = false
     private val rows = ArrayList<ArrayList<TileView>>()
     private var currentRow = 0
     private var lastDockIndex = 0
@@ -463,6 +465,12 @@ class HomeScreen(val ctx: Context, private val host: HomeHost, seed: HomeScreen?
         }.apply { priority = Thread.MIN_PRIORITY }.start()
     }
 
+    /** The window went to the back (an app, the screensaver, Settings): a move in progress is put back. */
+    fun onPaused() {
+        resumed = false
+        if (::appMenu.isInitialized) leaveMove()
+    }
+
     fun onResumed() {
         resumed = true
         if (::setup.isInitialized) setup.onReturned()
@@ -586,7 +594,8 @@ class HomeScreen(val ctx: Context, private val host: HomeHost, seed: HomeScreen?
         t.app = app
         t.id = View.generateViewId()
         t.tag = row
-        t.onClick = { if (!editMode) launch(app.pkg, t) }
+        // Read the tile's app at click time: a move swaps apps between tiles in place.
+        t.onClick = { val a = t.app; if (!editMode && a != null) launch(a.pkg, t) }
         t.onLongPress = { if (!editMode) startMove(t) }
         return t
     }
@@ -1051,12 +1060,20 @@ class HomeScreen(val ctx: Context, private val host: HomeHost, seed: HomeScreen?
             return true
         }
         val ok = code == KeyEvent.KEYCODE_DPAD_CENTER || code == KeyEvent.KEYCODE_ENTER
+        if (ok && eatOkUp) {
+            if (!down) { eatOkUp = false; return true }
+            if (e.repeatCount > 0) return true
+            eatOkUp = false
+        }
         if (settings.isOpen || cc.isOpen || appMenu.isOpen) return false
         val focusTile = focused() as? TileView
         if (movingPkg != null) {
             // The hold that started the move keeps repeating until OK is let go: only a new press drops.
             when (code) {
-                KeyEvent.KEYCODE_DPAD_CENTER, KeyEvent.KEYCODE_ENTER -> { if (down && e.repeatCount == 0) dropMove(); return true }
+                KeyEvent.KEYCODE_DPAD_CENTER, KeyEvent.KEYCODE_ENTER -> {
+                    if (down && e.repeatCount == 0) { dropMove(); eatOkUp = true }
+                    return true
+                }
                 KeyEvent.KEYCODE_MEDIA_PLAY_PAUSE -> { if (down && e.repeatCount == 0) openAppMenu(); return true }
                 KeyEvent.KEYCODE_DPAD_LEFT, KeyEvent.KEYCODE_DPAD_RIGHT, KeyEvent.KEYCODE_DPAD_UP, KeyEvent.KEYCODE_DPAD_DOWN -> {
                     if (down) moveBy(code); return true
